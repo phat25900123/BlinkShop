@@ -1008,6 +1008,8 @@ const greeting =
                 active === label ? "active" : ""
               }`}
               key={label}
+              type="button"
+              aria-current={active === label ? "page" : undefined}
               onClick={() => navigateTo(label)}
             >
               <Icon>{icon}</Icon>
@@ -1029,6 +1031,8 @@ const greeting =
             className={`nav-item ${
               active === "Settings" ? "active" : ""
             }`}
+            type="button"
+            aria-current={active === "Settings" ? "page" : undefined}
             onClick={() => navigateTo("Settings")}
           >
             <Icon>⚙</Icon>
@@ -1039,8 +1043,7 @@ const greeting =
         <div className="sidebar-bottom">
           <div className="credit-row">
             <span className="solana-dot" />
-            Devnet connected
-            <span className="live-dot" />
+            Solana Devnet
           </div>
 
           <div className="help-row">
@@ -1074,6 +1077,23 @@ const greeting =
             </button>
           </div>
         </header>
+
+        <nav className="mobile-nav" aria-label="Workspace navigation">
+          {["Overview", "Products", "Orders", "Blink links", "Settings"].map((label) => (
+            <button
+              className={active === label ? "active" : ""}
+              type="button"
+              aria-current={active === label ? "page" : undefined}
+              key={label}
+              onClick={() => navigateTo(label)}
+            >
+              {label}
+              {label === "Orders" && orders.length > 0 && (
+                <span>{orders.length}</span>
+              )}
+            </button>
+          ))}
+        </nav>
 
         {active === "Settings" ? (
           <SettingsView />

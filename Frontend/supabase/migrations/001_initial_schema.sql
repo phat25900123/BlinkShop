@@ -49,3 +49,5 @@ alter table public.orders enable row level security;
 -- from server-only code with SUPABASE_SERVICE_ROLE_KEY. Before enabling this
 -- adapter, reservation, expiration and payment state transitions should be
 -- implemented as transactional database functions to preserve oversell safety.
+-- TODO: reserve_inventory_and_create_order, expire_order_and_release_inventory,
+-- fail_order_and_release_inventory and confirm_paid_order.

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { actionResponse } from "@/lib/backend/cors";
+import { publicOrigin } from "@/lib/backend/app-url";
 import { store } from "@/lib/backend/store";
 import { verifyUsdcPayment } from "@/lib/backend/solana";
 
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest, context: Context) {
 
   const order = store.getOrder(orderId);
   if (!order || order.productId !== id) return actionResponse({ message: "Order not found" }, 404);
-  const origin = new URL(request.url).origin;
+  const origin = publicOrigin(request.url);
 
 if (order.status === "cancelled") {
   return actionResponse({ message: "Order has expired" }, 409);
@@ -52,23 +53,6 @@ if (order.status === "failed") {
   return actionResponse(
     { message: "Order is no longer payable. Please create a new order." },
     409,
-  );
-}
-
-if (order.status === "paid") {
-  const product = store.getProduct(order.productId);
-
-  if (!product) {
-    return actionResponse({ message: "Product not found" }, 404);
-  }
-
-  return actionResponse(
-    completedAction(
-      origin,
-      product,
-      order.id,
-      "Payment already confirmed",
-    ),
   );
 }
 
@@ -87,6 +71,30 @@ if (order.status === "paid") {
     return actionResponse({ message: "signature and account are required" }, 400);
   }
 
+  if (order.txSignature && order.txSignature !== body.signature) {
+    return actionResponse(
+      { message: "Order already has a different transaction signature" },
+      409,
+    );
+  }
+
+  if (order.status === "paid") {
+    const product = store.getProduct(order.productId);
+
+    if (!product) {
+      return actionResponse({ message: "Product not found" }, 404);
+    }
+
+    return actionResponse(
+      completedAction(
+        origin,
+        product,
+        order.id,
+        "Payment already confirmed",
+      ),
+    );
+  }
+
   try {
     try {
       if (new PublicKey(body.account).toBase58() !== new PublicKey(order.buyerWallet).toBase58()) {
@@ -98,7 +106,13 @@ if (order.status === "paid") {
 
     const existing = store.findOrderBySignature(body.signature);
     if (existing && existing.id !== order.id) return actionResponse({ message: "Transaction signature already used" }, 409);
-    store.attachSignature(order.id, body.signature);
+    const attachedOrder = store.attachSignature(order.id, body.signature);
+    if (!attachedOrder) {
+      return actionResponse(
+        { message: "Order already has a different transaction signature" },
+        409,
+      );
+    }
     const verification = await verifyWithRetry(body.signature, { buyerWallet: order.buyerWallet, amountUsdc: order.amountUsdc });
     if (verification === "pending") {
   return actionResponse(

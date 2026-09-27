@@ -21,6 +21,9 @@ export async function POST(request: NextRequest) {
   if (product.status !== "active") return NextResponse.json({ error: "Product is not available" }, { status: 409 });
   if (typeof body.buyerWallet !== "string" || !body.buyerWallet.trim()) return NextResponse.json({ error: "buyerWallet is required" }, { status: 400 });
   try { new PublicKey(body.buyerWallet); } catch { return NextResponse.json({ error: "buyerWallet is not a valid Solana address" }, { status: 400 }); }
+  if (product.variants.length > 0 && (typeof body.variant !== "string" || !body.variant.trim())) {
+    return NextResponse.json({ error: "A variant is required" }, { status: 400 });
+  }
   const variant = typeof body.variant === "string" ? product.variants.find((item) => item.value === body.variant) : undefined;
   if (body.variant && !variant) return NextResponse.json({ error: "Selected variant is not available" }, { status: 409 });
   if (quantity < 1 || quantity > product.inventory || (variant && quantity > variant.inventory)) return NextResponse.json({ error: "Insufficient inventory" }, { status: 409 });

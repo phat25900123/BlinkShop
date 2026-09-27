@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Transaction } from "@solana/web3.js";
-import Link from "next/link";
 import type { Product } from "@/lib/backend/types";
 import { getSolanaProvider } from "@/lib/phantom";
 
@@ -222,7 +221,6 @@ export function BlinkCheckout({ product }: { product: Product }) {
         </dl>
         <div className="receipt-actions">
           <a className="primary-button" href={`https://explorer.solana.com/tx/${receipt.signature}?cluster=devnet`} target="_blank" rel="noreferrer">View transaction ↗</a>
-          <Link className="secondary-button" href="/?view=Orders">View order</Link>
         </div>
       </div>
     );

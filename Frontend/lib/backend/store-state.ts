@@ -7,6 +7,18 @@ import {
   jsonPersistenceAdapter,
 } from "./store-persistence";
 
+const configuredDataStore =
+  process.env.DATA_STORE?.trim().toLowerCase() || "json";
+
+if (configuredDataStore !== "json") {
+  throw new Error(
+    `Unsupported DATA_STORE=${configuredDataStore}. ` +
+      "Only the JSON adapter is active; Supabase requires atomic inventory RPCs before it can be enabled.",
+  );
+}
+
+// TODO(production): select a Supabase adapter only after reservation,
+// expiration, failure release and paid confirmation are transactional RPCs.
 const persistence = jsonPersistenceAdapter;
 
 type BlinkShopState = {

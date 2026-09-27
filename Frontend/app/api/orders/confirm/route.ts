@@ -46,11 +46,23 @@ export async function POST(request: NextRequest) {
     },
     { status: 409 },
   );
-}
+    }
+    if (order.txSignature && order.txSignature !== body.txSignature) {
+      return NextResponse.json(
+        { error: "Order already has a different transaction signature" },
+        { status: 409 },
+      );
+    }
     if (order.status === "paid") return NextResponse.json({ order, duplicate: true });
     const existing = store.findOrderBySignature(body.txSignature);
     if (existing && existing.id !== order.id) return NextResponse.json({ error: "Transaction signature already used" }, { status: 409 });
-    store.attachSignature(order.id, body.txSignature);
+    const attachedOrder = store.attachSignature(order.id, body.txSignature);
+    if (!attachedOrder) {
+      return NextResponse.json(
+        { error: "Order already has a different transaction signature" },
+        { status: 409 },
+      );
+    }
     const verification = await verifyWithRetry(body.txSignature, { buyerWallet: order.buyerWallet, amountUsdc: order.amountUsdc });
     if (verification === "valid") return NextResponse.json({ order: store.markPaid(order.id) });
     if (verification === "pending") return NextResponse.json({ message: "Payment is still being confirmed", order: store.getOrder(order.id) }, { status: 202 });

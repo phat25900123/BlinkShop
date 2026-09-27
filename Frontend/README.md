@@ -71,6 +71,10 @@ The client never chooses the final merchant destination or price. The server cre
 - token balance deltas match the transfer; and
 - the transaction signature has not already been used by another order.
 
+The first signature attached to an order is immutable. Retrying that same
+signature is idempotent, while attempting to replace it returns `409` before
+verification and leaves the original signature unchanged.
+
 Production Action responses omit development-only blockhash, merchant-wallet, mint, and serialized-transaction metadata. Server errors do not expose secrets.
 
 ## Inventory and order lifecycle
@@ -84,7 +88,7 @@ Production Action responses omit development-only blockhash, merchant-wallet, mi
 
 ## Security checks
 
-The MVP has been exercised against:
+The MVP has passed the following checks:
 
 - variant overselling;
 - sold-out variant purchases;
@@ -133,7 +137,7 @@ Copy `.env.example` to `.env.local` and fill in the values. Do not commit `.env.
 | `SOLANA_USDC_MINT` | Yes | Devnet USDC SPL mint. |
 | `MERCHANT_WALLET` | Yes | Public Solana address receiving USDC. Never use a private key. |
 | `MERCHANT_ID` | Recommended | Merchant workspace identifier; defaults to Aria Studio's demo ID. |
-| `DATA_STORE` | Local only | Currently `json`; documents the selected local adapter. |
+| `DATA_STORE` | Local only | Must currently be `json`; other values fail clearly instead of silently selecting an inactive adapter. |
 | `SUPABASE_URL` | Migration | Server-only Supabase project URL for the staged adapter. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Migration | Server-only service role key. Never expose it with `NEXT_PUBLIC_`. |
 
@@ -164,6 +168,10 @@ Main routes:
 
 ## Devnet demo
 
+The committed demo store contains three products priced from 0.15–0.30 USDC,
+one sold-out size, and no historical orders. The first live payment therefore
+appears as a clean new Paid order during the demo.
+
 1. Start on the dashboard and show a product priced between 0.1 and 0.5 Devnet USDC.
 2. Choose **Open Blink**.
 3. Connect Phantom on Devnet.
@@ -177,17 +185,38 @@ Use Devnet assets only; they have no real-world value.
 
 ## Deployment
 
-The Next.js application can be deployed to Vercel over HTTPS. Before deploying:
+The frontend can be deployed to Vercel as a read-only/public showcase over
+HTTPS. Do not present the JSON-backed payment flow as production-durable.
+Before deploying a public showcase:
 
 1. Configure all required environment variables in the Vercel project.
 2. Set `NEXT_PUBLIC_APP_URL` to the final HTTPS origin before building.
 3. Confirm `/actions.json`, `/api/actions/product/:id`, and `/blink/:id` use that origin.
 4. Replace local JSON persistence before relying on serverless durability or concurrent traffic.
 5. Run the migration at `supabase/migrations/001_initial_schema.sql` in Supabase.
-6. Complete transactional Supabase reserve/release/confirm functions and wire `SupabasePersistenceAdapter` into the business store.
+6. Complete transactional Supabase functions named for
+   `reserve_inventory_and_create_order`,
+   `expire_order_and_release_inventory`,
+   `fail_order_and_release_inventory`, and `confirm_paid_order`, then wire the
+   adapter into the business store.
 7. Re-run the security and payment tests against the deployed Devnet app.
 
-`data/store.json` is intentionally convenient for local demos, but Vercel's filesystem is ephemeral and multiple function instances do not share its in-memory state. Do not treat the current JSON adapter as production persistence.
+`data/store.json` is intentionally convenient for local demos, but Vercel's
+filesystem is ephemeral and multiple function instances do not share its
+in-memory state. Action POST may reserve an order on one instance while confirm
+runs on another instance with different state. Do not treat the current JSON
+adapter as production persistence.
+
+The merchant mutation routes (`POST /api/products`, `PATCH/DELETE
+/api/products/:id`, and direct `POST /api/orders`) do not have authentication.
+This is acceptable only for the local hackathon MVP. A public payment deployment
+needs merchant authentication or a secure server-mediated admin session; no
+admin secret is exposed to the browser in this version.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs `npm ci`, TypeScript, ESLint, and the production
+build on pushes to `main` and on pull requests using Node.js 22.
 
 ## Known limitations
 

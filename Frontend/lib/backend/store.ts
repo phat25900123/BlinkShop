@@ -29,13 +29,12 @@ function seedProducts() {
     description:
       "A limited studio edition hoodie.",
 
-    // Giữ giá demo hiện tại của bạn.
-    priceUsdc: 0.5,
+    priceUsdc: 0.3,
 
     imageUrl:
       "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&w=900&q=85",
 
-    inventory: 24,
+    inventory: 18,
     status: "active",
 
     variants: [
@@ -43,7 +42,7 @@ function seedProducts() {
         id: "s",
         name: "Size",
         value: "S",
-        inventory: 6,
+        inventory: 0,
       },
       {
         id: "m",
@@ -70,14 +69,12 @@ function seedProducts() {
     description:
       "A signal for the next drop.",
 
-    // Mình dùng đúng giá demo đang xuất hiện
-    // trong screenshot của bạn.
-    priceUsdc: 0.4,
+    priceUsdc: 0.2,
 
     imageUrl:
       "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=900&q=85",
 
-    inventory: 61,
+    inventory: 32,
     status: "active",
     variants: [],
 
@@ -92,12 +89,12 @@ function seedProducts() {
     description:
       "Access to the Aria Studio session.",
 
-    priceUsdc: 0.3,
+    priceUsdc: 0.15,
 
     imageUrl:
       "https://images.unsplash.com/photo-1506157786151-b8491531f063?auto=format&fit=crop&w=900&q=85",
 
-    inventory: 120,
+    inventory: 50,
     status: "active",
     variants: [],
 
@@ -487,6 +484,19 @@ export const store = {
 
     if (!order) {
       return undefined;
+    }
+
+    // A pending order is permanently bound to the first signature attached
+    // to it. Retrying the same signature is idempotent; replacing it is not.
+    if (
+      order.txSignature &&
+      order.txSignature !== signature
+    ) {
+      return undefined;
+    }
+
+    if (order.txSignature === signature) {
+      return order;
     }
 
     const updated = {

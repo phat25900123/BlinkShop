@@ -105,6 +105,9 @@ function orderToRow(order: Order): OrderRow {
  * synchronous business store protects the tested local flow; production
  * activation also needs transactional reserve/release database functions so
  * multiple serverless instances cannot oversell the same inventory.
+ * Required operations: reserve_inventory_and_create_order,
+ * expire_order_and_release_inventory, fail_order_and_release_inventory and
+ * confirm_paid_order (with database-enforced signature uniqueness).
  */
 export class SupabasePersistenceAdapter {
   private readonly baseUrl: string;

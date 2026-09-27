@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 
 import { actionResponse } from "@/lib/backend/cors";
+import { publicOrigin } from "@/lib/backend/app-url";
 
 import { store } from "@/lib/backend/store";
 
@@ -22,18 +23,6 @@ type ActionRequestBody = {
   quantity?: unknown;
   variant?: unknown;
 };
-
-function publicOrigin(requestUrl: string) {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (configured) {
-    try {
-      return new URL(configured).origin;
-    } catch {
-      // Fall back to the request origin when local configuration is invalid.
-    }
-  }
-  return new URL(requestUrl).origin;
-}
 
 export async function OPTIONS() {
   return actionResponse({}, 204);
