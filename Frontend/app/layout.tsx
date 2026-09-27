@@ -5,6 +5,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "BlinkShop | Social commerce, settled on Solana",
   description: "Turn every social post into an instant, onchain checkout.",
+  icons: {
+    icon: [{ url: "/blinkshop-logo.png", type: "image/png" }],
+    apple: "/blinkshop-logo.png",
+  },
 };
 
 export default function RootLayout({

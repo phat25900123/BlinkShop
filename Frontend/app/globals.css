@@ -7,7 +7,9 @@ button { font: inherit; }
 .app-shell { display: flex; min-height: 100vh; background: var(--paper); }
 .sidebar { width: 242px; flex: 0 0 242px; border-right: 1px solid var(--line); background: #f2f2ed; padding: 28px 16px 20px; display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 9px; padding: 0 13px; font-size: 19px; font-weight: 760; letter-spacing: -.7px; }
-.brand-mark { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 7px; background: var(--ink); color: var(--lime); font-size: 15px; font-weight: 800; }
+.brand-mark { display: grid; place-items: center; width: 28px; height: 28px; overflow: hidden; border-radius: 8px; background: #090a09 url("/blinkshop-logo.png") center/132% no-repeat; color: transparent; font-size: 0; }
+.brand-wordmark { color: var(--ink); font-weight: 760; letter-spacing: -.45px; }
+.brand-wordmark-accent { color: #a3ff3d; }
 .workspace-switcher { margin: 42px 2px 32px; padding: 10px 10px; display: flex; align-items: center; gap: 9px; border: 1px solid #dcdcd4; border-radius: 9px; background: #fafaf5; font-size: 11px; }
 .workspace-switcher b, .workspace-switcher small { display: block; white-space: nowrap; } .workspace-switcher b { font-size: 11px; } .workspace-switcher small { color: var(--muted); margin-top: 2px; font-size: 9px; }.chevron { margin-left: auto; color: #999; font-size: 15px; }
 .avatar { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #f1bd6a; color: #6c4613; font-weight: 700; font-size: 11px; }.avatar.small { width: 25px; height: 25px; }

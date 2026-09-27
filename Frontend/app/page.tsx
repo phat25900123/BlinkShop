@@ -1055,7 +1055,9 @@ const greeting =
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark">B</span>
-          <span>blinkshop</span>
+          <span className="brand-wordmark">
+            Blink<span className="brand-wordmark-accent">Shop</span>
+          </span>
         </div>
 
         <div className="workspace-switcher">

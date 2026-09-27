@@ -25,7 +25,7 @@ export default async function BlinkFallback({ params }: Context) {
   return (
     <main className="blink-fallback">
       <div className="blink-fallback-card">
-        <div className="blink-fallback-brand"><span className="brand-mark">B</span><span>blinkshop</span><span className="network-chip">Solana Devnet</span></div>
+        <div className="blink-fallback-brand"><span className="brand-mark">B</span><span className="brand-wordmark">Blink<span className="brand-wordmark-accent">Shop</span></span><span className="network-chip">Solana Devnet</span></div>
         <div className="blink-fallback-image" role="img" aria-label={product.name} style={product.imageUrl ? { backgroundImage: `url(${product.imageUrl})` } : undefined} />
         <div className="blink-fallback-content">
           <p className="eyebrow">ARIA STUDIO</p>
