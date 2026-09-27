@@ -138,6 +138,7 @@ Copy `.env.example` to `.env.local` and fill in the values. Do not commit `.env.
 | `MERCHANT_WALLET` | Yes | Public Solana address receiving USDC. Never use a private key. |
 | `MERCHANT_ID` | Recommended | Merchant workspace identifier; defaults to Aria Studio's demo ID. |
 | `DATA_STORE` | Local only | Must currently be `json`; other values fail clearly instead of silently selecting an inactive adapter. |
+| `DATA_DIR` | Optional | Directory containing `store.json`. Set to `/data` when using a Railway persistent volume; otherwise defaults to `<project>/data`. |
 | `SUPABASE_URL` | Migration | Server-only Supabase project URL for the staged adapter. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Migration | Server-only service role key. Never expose it with `NEXT_PUBLIC_`. |
 
@@ -184,6 +185,42 @@ appears as a clean new Paid order during the demo.
 Use Devnet assets only; they have no real-world value.
 
 ## Deployment
+
+### Railway hackathon deployment
+
+Railway can run the JSON-backed hackathon demo as a single service with a
+persistent volume. This is suitable for controlled demo traffic, but it does
+not add cross-instance locking or merchant authentication.
+
+1. Create a Railway service from this GitHub repository.
+2. Set **Root Directory** to `/Frontend`.
+3. Set **Build Command** to `npm run build`.
+4. Set **Start Command** to `npm run start`.
+5. Attach a persistent volume and mount it at `/data`.
+6. Configure these variables:
+
+   ```env
+   DATA_STORE=json
+   DATA_DIR=/data
+   SOLANA_RPC_URL=<your-devnet-rpc-url>
+   SOLANA_USDC_MINT=<your-devnet-usdc-mint>
+   MERCHANT_WALLET=<your-public-merchant-wallet>
+   MERCHANT_ID=merchant-aria-studio
+   ```
+
+7. Deploy once, then generate a public HTTPS domain in Railway.
+8. Set `NEXT_PUBLIC_APP_URL` to that final Railway origin without a trailing
+   slash, for example `https://blinkshop-production.up.railway.app`.
+9. Redeploy after setting the final URL so Actions, callbacks, and Blink links
+   all use the public HTTPS origin.
+10. Verify `/actions.json`, `/api/actions/product/:id`, and `/blink/:id` on the
+    deployed domain before running the Phantom Devnet demo.
+
+Keep the service at one replica while using this JSON adapter. The mounted
+volume makes restarts durable, but JSON file writes are not a distributed
+database and should not be shared by multiple application replicas.
+
+### Vercel showcase
 
 The frontend can be deployed to Vercel as a read-only/public showcase over
 HTTPS. Do not present the JSON-backed payment flow as production-durable.

@@ -20,10 +20,11 @@ export interface StorePersistenceAdapter {
   save(products: Product[], orders: Order[]): void;
 }
 
-const dataDirectory = path.join(
-  process.cwd(),
-  "data",
-);
+const configuredDataDirectory = process.env.DATA_DIR?.trim();
+
+const dataDirectory = configuredDataDirectory
+  ? path.resolve(configuredDataDirectory)
+  : path.join(process.cwd(), "data");
 
 const storeFile = path.join(
   dataDirectory,
