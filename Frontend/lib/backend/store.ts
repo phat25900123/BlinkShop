@@ -1,75 +1,744 @@
 import { randomUUID } from "node:crypto";
-import type { Order, Product, ProductStatus, ProductVariant } from "./types";
+
+import type {
+  Order,
+  Product,
+  ProductStatus,
+  ProductVariant,
+} from "./types";
+
+import {
+  persistState,
+  state,
+} from "./store-state";
 
 const merchantId = "merchant-aria-studio";
-const now = new Date().toISOString();
 
-const products = new Map<string, Product>([
-  ["blk-001", { id: "blk-001", merchantId, name: "Afterglow hoodie", description: "A limited studio edition hoodie.", priceUsdc: 48, imageUrl: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&w=900&q=85", inventory: 24, status: "active", variants: [{ id: "s", name: "Size", value: "S", inventory: 6 }, { id: "m", name: "Size", value: "M", inventory: 10 }, { id: "l", name: "Size", value: "L", inventory: 8 }], createdAt: now, updatedAt: now }],
-  ["blk-002", { id: "blk-002", merchantId, name: "Signal cap", description: "A signal for the next drop.", priceUsdc: 22, imageUrl: "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=900&q=85", inventory: 61, status: "active", variants: [], createdAt: now, updatedAt: now }],
-  ["blk-003", { id: "blk-003", merchantId, name: "Studio pass 2026", description: "Access to the Aria Studio session.", priceUsdc: 12, imageUrl: "https://images.unsplash.com/photo-1506157786151-b8491531f063?auto=format&fit=crop&w=900&q=85", inventory: 120, status: "active", variants: [], createdAt: now, updatedAt: now }],
-]);
+function seedProducts() {
+  if (state.initialized) {
+    return;
+  }
 
-const orders = new Map<string, Order>();
+  const now =
+    new Date().toISOString();
 
-function refreshStatus(product: Product): Product {
-  const status: ProductStatus = product.inventory === 0 ? "sold_out" : product.status === "sold_out" ? "active" : product.status;
-  return { ...product, status };
+  state.products.set("blk-001", {
+    id: "blk-001",
+    merchantId,
+    name: "Afterglow hoodie",
+    description:
+      "A limited studio edition hoodie.",
+
+    // Giữ giá demo hiện tại của bạn.
+    priceUsdc: 0.5,
+
+    imageUrl:
+      "https://images.unsplash.com/photo-1556821840-3a63f95609a7?auto=format&fit=crop&w=900&q=85",
+
+    inventory: 24,
+    status: "active",
+
+    variants: [
+      {
+        id: "s",
+        name: "Size",
+        value: "S",
+        inventory: 6,
+      },
+      {
+        id: "m",
+        name: "Size",
+        value: "M",
+        inventory: 10,
+      },
+      {
+        id: "l",
+        name: "Size",
+        value: "L",
+        inventory: 8,
+      },
+    ],
+
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  state.products.set("blk-002", {
+    id: "blk-002",
+    merchantId,
+    name: "Signal cap",
+    description:
+      "A signal for the next drop.",
+
+    // Mình dùng đúng giá demo đang xuất hiện
+    // trong screenshot của bạn.
+    priceUsdc: 0.4,
+
+    imageUrl:
+      "https://images.unsplash.com/photo-1521369909029-2afed882baee?auto=format&fit=crop&w=900&q=85",
+
+    inventory: 61,
+    status: "active",
+    variants: [],
+
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  state.products.set("blk-003", {
+    id: "blk-003",
+    merchantId,
+    name: "Studio pass 2026",
+    description:
+      "Access to the Aria Studio session.",
+
+    priceUsdc: 0.3,
+
+    imageUrl:
+      "https://images.unsplash.com/photo-1506157786151-b8491531f063?auto=format&fit=crop&w=900&q=85",
+
+    inventory: 120,
+    status: "active",
+    variants: [],
+
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  state.initialized = true;
+
+  persistState();
+}
+
+seedProducts();
+
+const products = state.products;
+const orders = state.orders;
+
+function refreshStatus(
+  product: Product,
+): Product {
+  const status: ProductStatus =
+    product.inventory === 0
+      ? "sold_out"
+      : product.status === "sold_out"
+        ? "active"
+        : product.status;
+
+  return {
+    ...product,
+    status,
+  };
+}
+
+function expirePendingOrders() {
+  const currentTime = Date.now();
+
+  let changed = false;
+
+  for (const [id, order] of orders) {
+    if (
+      order.status !== "pending" ||
+      new Date(
+        order.expiresAt,
+      ).getTime() > currentTime
+    ) {
+      continue;
+    }
+
+    if (order.inventoryReserved) {
+      const product =
+        products.get(order.productId);
+
+      if (product) {
+        const variants =
+          product.variants.map(
+            (variant) =>
+              variant.value ===
+              order.variant
+                ? {
+                    ...variant,
+                    inventory:
+                      variant.inventory +
+                      order.quantity,
+                  }
+                : variant,
+          );
+
+        products.set(
+          product.id,
+          refreshStatus({
+            ...product,
+            inventory:
+              product.inventory +
+              order.quantity,
+            variants,
+            updatedAt:
+              new Date().toISOString(),
+          }),
+        );
+      }
+    }
+
+    orders.set(id, {
+      ...order,
+      status: "cancelled",
+      inventoryReserved: false,
+      updatedAt:
+        new Date().toISOString(),
+    });
+
+    changed = true;
+  }
+
+  if (changed) {
+    persistState();
+  }
 }
 
 export const store = {
-  listProducts() { return [...products.values()].map(refreshStatus); },
-  getProduct(id: string) { const product = products.get(id); return product ? refreshStatus(product) : undefined; },
-  createProduct(input: Omit<Product, "id" | "createdAt" | "updatedAt" | "status">) {
-    const timestamp = new Date().toISOString();
-    const product: Product = { ...input, id: `blk-${randomUUID().slice(0, 8)}`, status: input.inventory > 0 ? "active" : "sold_out", createdAt: timestamp, updatedAt: timestamp };
-    products.set(product.id, product);
+  listProducts() {
+    return [
+      ...products.values(),
+    ].map(refreshStatus);
+  },
+
+  getProduct(id: string) {
+    const product =
+      products.get(id);
+
+    return product
+      ? refreshStatus(product)
+      : undefined;
+  },
+
+  createProduct(
+    input: Omit<
+      Product,
+      | "id"
+      | "createdAt"
+      | "updatedAt"
+      | "status"
+    >,
+  ) {
+    const timestamp =
+      new Date().toISOString();
+
+    const product: Product = {
+      ...input,
+
+      id: `blk-${randomUUID().slice(
+        0,
+        8,
+      )}`,
+
+      status:
+        input.inventory > 0
+          ? "active"
+          : "sold_out",
+
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    products.set(
+      product.id,
+      product,
+    );
+
+    persistState();
+
     return product;
   },
-  updateProduct(id: string, input: Partial<Pick<Product, "name" | "description" | "priceUsdc" | "imageUrl" | "inventory" | "status" | "variants">>) {
-    const current = products.get(id);
-    if (!current) return undefined;
-    const product = refreshStatus({ ...current, ...input, updatedAt: new Date().toISOString() });
-    products.set(id, product);
+
+  updateProduct(
+    id: string,
+    input: Partial<
+      Pick<
+        Product,
+        | "name"
+        | "description"
+        | "priceUsdc"
+        | "imageUrl"
+        | "inventory"
+        | "status"
+        | "variants"
+      >
+    >,
+  ) {
+    const current =
+      products.get(id);
+
+    if (!current) {
+      return undefined;
+    }
+
+    const product =
+      refreshStatus({
+        ...current,
+        ...input,
+        updatedAt:
+          new Date().toISOString(),
+      });
+
+    products.set(
+      id,
+      product,
+    );
+
+    persistState();
+
     return product;
   },
-  deleteProduct(id: string) { return products.delete(id); },
-  listOrders() { return [...orders.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)); },
-  getOrder(id: string) { return orders.get(id); },
-  findOrderBySignature(signature: string) { return [...orders.values()].find((order) => order.txSignature === signature); },
-  createOrder(input: Omit<Order, "id" | "createdAt" | "updatedAt" | "status">) {
-    const timestamp = new Date().toISOString();
-    const order: Order = { ...input, id: `order-${randomUUID().slice(0, 8)}`, status: "pending", createdAt: timestamp, updatedAt: timestamp };
-    orders.set(order.id, order);
+
+  hasPendingOrders(
+    productId: string,
+  ) {
+    expirePendingOrders();
+
+    return [
+      ...orders.values(),
+    ].some(
+      (order) =>
+        order.productId ===
+          productId &&
+        order.status ===
+          "pending",
+    );
+  },
+
+  deleteProduct(id: string) {
+    if (
+      store.hasPendingOrders(id)
+    ) {
+      return "pending_orders" as const;
+    }
+
+    const deleted =
+      products.delete(id);
+
+    if (deleted) {
+      persistState();
+    }
+
+    return deleted;
+  },
+
+  listOrders() {
+    expirePendingOrders();
+
+    return [
+      ...orders.values(),
+    ].sort((a, b) =>
+      b.createdAt.localeCompare(
+        a.createdAt,
+      ),
+    );
+  },
+
+  getOrder(id: string) {
+    expirePendingOrders();
+
+    return orders.get(id);
+  },
+
+  findOrderBySignature(
+    signature: string,
+  ) {
+    expirePendingOrders();
+
+    return [
+      ...orders.values(),
+    ].find(
+      (order) =>
+        order.txSignature ===
+        signature,
+    );
+  },
+
+  createOrder(
+    input: Omit<
+      Order,
+      | "id"
+      | "createdAt"
+      | "updatedAt"
+      | "status"
+      | "expiresAt"
+      | "inventoryReserved"
+    >,
+  ) {
+    const product =
+      products.get(
+        input.productId,
+      );
+
+    if (
+      !product ||
+      product.status !==
+        "active"
+    ) {
+      return undefined;
+    }
+
+    // Product có variants thì bắt buộc
+    // order phải chọn một variant hợp lệ.
+    if (
+      product.variants.length > 0 &&
+      !input.variant
+    ) {
+      return undefined;
+    }
+
+    const selectedVariant =
+      input.variant
+        ? product.variants.find(
+            (variant) =>
+              variant.value ===
+              input.variant,
+          )
+        : undefined;
+
+    if (
+      product.inventory <
+      input.quantity
+    ) {
+      return undefined;
+    }
+
+    if (
+      input.variant &&
+      (!selectedVariant ||
+        selectedVariant.inventory <
+          input.quantity)
+    ) {
+      return undefined;
+    }
+
+    const variants =
+      product.variants.map(
+        (variant) =>
+          variant.value ===
+          input.variant
+            ? {
+                ...variant,
+                inventory:
+                  variant.inventory -
+                  input.quantity,
+              }
+            : variant,
+      );
+
+    products.set(
+      product.id,
+      refreshStatus({
+        ...product,
+
+        inventory:
+          product.inventory -
+          input.quantity,
+
+        variants,
+
+        updatedAt:
+          new Date().toISOString(),
+      }),
+    );
+
+    const timestamp =
+      new Date().toISOString();
+
+    const order: Order = {
+      ...input,
+
+      id: `order-${randomUUID().slice(
+        0,
+        8,
+      )}`,
+
+      status: "pending",
+
+      inventoryReserved: true,
+
+      createdAt: timestamp,
+      updatedAt: timestamp,
+
+      expiresAt: new Date(
+        Date.now() +
+          10 * 60 * 1000,
+      ).toISOString(),
+    };
+
+    orders.set(
+      order.id,
+      order,
+    );
+
+    persistState();
+
     return order;
   },
-  attachSignature(id: string, signature: string) {
-    const order = orders.get(id);
-    if (!order) return undefined;
-    const updated = { ...order, txSignature: signature, updatedAt: new Date().toISOString() };
-    orders.set(id, updated);
+
+  attachSignature(
+    id: string,
+    signature: string,
+  ) {
+    const order =
+      orders.get(id);
+
+    if (!order) {
+      return undefined;
+    }
+
+    const updated = {
+      ...order,
+
+      txSignature:
+        signature,
+
+      updatedAt:
+        new Date().toISOString(),
+    };
+
+    orders.set(
+      id,
+      updated,
+    );
+
+    persistState();
+
     return updated;
   },
+
   markPaid(id: string) {
-    const order = orders.get(id);
-    if (!order || order.status === "paid") return order;
-    const product = products.get(order.productId);
-    if (!product || product.inventory < order.quantity) return undefined;
-    products.set(product.id, refreshStatus({ ...product, inventory: product.inventory - order.quantity, updatedAt: new Date().toISOString() }));
-    const updated = { ...order, status: "paid" as const, updatedAt: new Date().toISOString() };
-    orders.set(id, updated);
+    const order =
+      orders.get(id);
+
+    if (!order) {
+      return undefined;
+    }
+
+    if (
+      order.status === "paid"
+    ) {
+      return order;
+    }
+
+    if (
+      !order.inventoryReserved
+    ) {
+      return undefined;
+    }
+
+    const updated = {
+      ...order,
+
+      status:
+        "paid" as const,
+
+      inventoryReserved:
+        false,
+
+      updatedAt:
+        new Date().toISOString(),
+    };
+
+    orders.set(
+      id,
+      updated,
+    );
+
+    persistState();
+
     return updated;
   },
+
   markFailed(id: string) {
-    const order = orders.get(id);
-    if (!order || order.status === "paid") return order;
-    const updated = { ...order, status: "failed" as const, updatedAt: new Date().toISOString() };
-    orders.set(id, updated);
+    const order =
+      orders.get(id);
+
+    if (!order) {
+      return undefined;
+    }
+
+    if (
+      order.status === "paid"
+    ) {
+      return order;
+    }
+
+    store.releaseInventory(
+      order,
+    );
+
+    const updated = {
+      ...order,
+
+      status:
+        "failed" as const,
+
+      inventoryReserved:
+        false,
+
+      updatedAt:
+        new Date().toISOString(),
+    };
+
+    orders.set(
+      id,
+      updated,
+    );
+
+    persistState();
+
     return updated;
+  },
+
+  releaseInventory(
+    order: Order,
+  ) {
+    if (
+      !order.inventoryReserved
+    ) {
+      return;
+    }
+
+    const product =
+      products.get(
+        order.productId,
+      );
+
+    if (!product) {
+      return;
+    }
+
+    const variants =
+      product.variants.map(
+        (variant) =>
+          variant.value ===
+          order.variant
+            ? {
+                ...variant,
+
+                inventory:
+                  variant.inventory +
+                  order.quantity,
+              }
+            : variant,
+      );
+
+    products.set(
+      product.id,
+      refreshStatus({
+        ...product,
+
+        inventory:
+          product.inventory +
+          order.quantity,
+
+        variants,
+
+        updatedAt:
+          new Date().toISOString(),
+      }),
+    );
+
+    persistState();
   },
 };
 
-export function normalizeVariants(value: unknown): ProductVariant[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((variant): variant is ProductVariant => typeof variant === "object" && variant !== null && typeof (variant as ProductVariant).name === "string" && typeof (variant as ProductVariant).value === "string" && Number.isInteger((variant as ProductVariant).inventory)).map((variant) => ({ id: variant.id || randomUUID(), name: variant.name, value: variant.value, inventory: variant.inventory }));
+export function normalizeVariants(
+  value: unknown,
+): ProductVariant[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(
+      (
+        variant,
+      ): variant is ProductVariant =>
+        typeof variant ===
+          "object" &&
+        variant !== null &&
+        typeof (
+          variant as ProductVariant
+        ).name === "string" &&
+        Boolean(
+          (
+            variant as ProductVariant
+          ).name.trim(),
+        ) &&
+        typeof (
+          variant as ProductVariant
+        ).value === "string" &&
+        Boolean(
+          (
+            variant as ProductVariant
+          ).value.trim(),
+        ) &&
+        Number.isInteger(
+          (
+            variant as ProductVariant
+          ).inventory,
+        ) &&
+        (
+          variant as ProductVariant
+        ).inventory >= 0,
+    )
+    .map((variant) => ({
+      id:
+        variant.id ||
+        randomUUID(),
+
+      name:
+        variant.name.trim(),
+
+      value:
+        variant.value.trim(),
+
+      inventory:
+        variant.inventory,
+    }));
+}
+
+export function areVariantsValid(
+  input: unknown,
+  variants: ProductVariant[],
+  inventory: number,
+) {
+  if (
+    !Array.isArray(input) ||
+    variants.length !==
+      input.length
+  ) {
+    return false;
+  }
+
+  if (
+    variants.length === 0
+  ) {
+    return true;
+  }
+
+  if (
+    new Set(
+      variants.map(
+        (variant) =>
+          variant.value,
+      ),
+    ).size !==
+    variants.length
+  ) {
+    return false;
+  }
+
+  return (
+    variants.reduce(
+      (total, variant) =>
+        total +
+        variant.inventory,
+      0,
+    ) === inventory
+  );
 }

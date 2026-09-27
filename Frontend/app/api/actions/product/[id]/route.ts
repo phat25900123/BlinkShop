@@ -1,50 +1,469 @@
 import { NextRequest } from "next/server";
-import { PublicKey } from "@solana/web3.js";
-import { actionResponse } from "@/lib/backend/cors";
-import { store } from "@/lib/backend/store";
-import { createUsdcTransferTransaction, getSolanaConfig } from "@/lib/backend/solana";
 
-type Context = { params: Promise<{ id: string }> };
+import { PublicKey } from "@solana/web3.js";
+
+import { actionResponse } from "@/lib/backend/cors";
+
+import { store } from "@/lib/backend/store";
+
+import {
+  createUsdcTransferTransaction,
+  getSolanaConfig,
+} from "@/lib/backend/solana";
+
+type Context = {
+  params: Promise<{
+    id: string;
+  }>;
+};
+
+type ActionRequestBody = {
+  account?: unknown;
+  quantity?: unknown;
+  variant?: unknown;
+};
+
+function publicOrigin(requestUrl: string) {
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  if (configured) {
+    try {
+      return new URL(configured).origin;
+    } catch {
+      // Fall back to the request origin when local configuration is invalid.
+    }
+  }
+  return new URL(requestUrl).origin;
+}
 
 export async function OPTIONS() {
   return actionResponse({}, 204);
 }
 
-export async function GET(_request: NextRequest, context: Context) {
-  const { id } = await context.params;
-  const product = store.getProduct(id);
-  if (!product) return actionResponse({ error: "Product not found" }, 404);
+export async function GET(
+  request: NextRequest,
+  context: Context,
+) {
+  const { id } =
+    await context.params;
+
+  const product =
+    store.getProduct(id);
+
+  if (!product) {
+    return actionResponse(
+      {
+        message:
+          "Product not found",
+      },
+      404,
+    );
+  }
+
+  const origin = publicOrigin(request.url);
+
+  const availableVariants =
+    product.variants.filter(
+      (variant) =>
+        variant.inventory > 0,
+    );
+
+  const maximumQuantity =
+    product.variants.length > 0
+      ? Math.max(
+          1,
+          ...availableVariants.map(
+            (variant) =>
+              variant.inventory,
+          ),
+        )
+      : Math.max(
+          product.inventory,
+          1,
+        );
+
+  const actionHref =
+    `${origin}/api/actions/product/${product.id}` +
+    `?quantity={quantity}` +
+    `${
+      product.variants.length > 0
+        ? "&variant={variant}"
+        : ""
+    }`;
+
+  const parameters = [
+    ...(product.variants.length >
+    0
+      ? [
+          {
+            name: "variant",
+
+            label:
+              product
+                .variants[0]
+                .name,
+
+            type: "select",
+
+            options:
+              availableVariants.map(
+                (variant) => ({
+                  label:
+                    variant.value,
+
+                  value:
+                    variant.value,
+                }),
+              ),
+          },
+        ]
+      : []),
+
+    {
+      name: "quantity",
+
+      label: "Quantity",
+
+      type: "number",
+
+      min: 1,
+
+      max: maximumQuantity,
+    },
+  ];
+
+  const productIsAvailable =
+    product.status ===
+      "active" &&
+    product.inventory > 0 &&
+    (product.variants.length ===
+      0 ||
+      availableVariants.length >
+        0);
+
   return actionResponse({
     type: "action",
-    icon: product.imageUrl,
+
+    icon: `${origin}/blinkshop-icon.svg`,
+
     title: `${product.name} · ${product.priceUsdc} USDC`,
-    description: product.description,
-    label: product.status === "active" ? "Buy now" : "Sold out",
-    disabled: product.status !== "active",
-    links: { actions: [{ label: "Buy now", href: `/api/actions/product/${product.id}`, type: "transaction" }] },
+
+    description:
+      product.description,
+
+    label:
+      productIsAvailable
+        ? "Buy now"
+        : "Sold out",
+
+    disabled:
+      !productIsAvailable,
+
+    links: {
+      actions: [
+        {
+          label:
+            productIsAvailable
+              ? "Buy now"
+              : "Sold out",
+
+          href: actionHref,
+
+          type: "transaction",
+
+          parameters,
+        },
+      ],
+    },
   });
 }
 
-export async function POST(request: NextRequest, context: Context) {
-  const { id } = await context.params;
-  const product = store.getProduct(id);
-  if (!product) return actionResponse({ error: "Product not found" }, 404);
-  if (product.status !== "active") return actionResponse({ error: "Product is sold out" }, 409);
+export async function POST(
+  request: NextRequest,
+  context: Context,
+) {
+  const { id } =
+    await context.params;
+
+  const product =
+    store.getProduct(id);
+
+  if (!product) {
+    return actionResponse(
+      {
+        message:
+          "Product not found",
+      },
+      404,
+    );
+  }
+
+  if (
+    product.status !== "active"
+  ) {
+    return actionResponse(
+      {
+        message:
+          "Product is sold out",
+      },
+      409,
+    );
+  }
+
+  let body: ActionRequestBody;
+
   try {
-    const body = await request.json();
-    if (typeof body.account !== "string") return actionResponse({ error: "account is required" }, 400);
-    new PublicKey(body.account);
-    const quantity = Number.isInteger(body.quantity) ? body.quantity : 1;
-    if (quantity < 1 || quantity > product.inventory) return actionResponse({ error: "Insufficient inventory" }, 409);
-    const variant = typeof body.variant === "string" ? product.variants.find((item) => item.value === body.variant) : undefined;
-    if (body.variant && !variant) return actionResponse({ error: "Selected variant is not available" }, 409);
-    const order = store.createOrder({ productId: product.id, merchantId: product.merchantId, buyerWallet: body.account, variant: variant?.value, quantity, amountUsdc: product.priceUsdc * quantity });
-    const transaction = await createUsdcTransferTransaction(body.account, order.amountUsdc);
-    return actionResponse({ transaction: transaction.serializedTransaction, message: `Pay ${order.amountUsdc} USDC for ${product.name}`, orderId: order.id, ...transaction });
+    body = (await request.json()) as ActionRequestBody;
+  } catch {
+    return actionResponse(
+      { message: "Invalid JSON body" },
+      400,
+    );
+  }
+
+  let orderId = "";
+
+  try {
+    const url =
+      new URL(request.url);
+
+    const queryQuantity =
+      url.searchParams.get(
+        "quantity",
+      );
+
+    const queryVariant =
+      url.searchParams.get(
+        "variant",
+      );
+
+    if (
+      typeof body.account !==
+      "string"
+    ) {
+      return actionResponse(
+        {
+          message:
+            "account is required",
+        },
+        400,
+      );
+    }
+
+    try {
+      new PublicKey(
+        body.account,
+      );
+    } catch {
+      return actionResponse(
+        {
+          message:
+            "account is not a valid Solana address",
+        },
+        400,
+      );
+    }
+
+    const requestedQuantity =
+      queryQuantity === null
+        ? body.quantity
+        : Number(
+            queryQuantity,
+          );
+
+    const quantity =
+      typeof requestedQuantity === "number" &&
+      Number.isInteger(requestedQuantity)
+        ? requestedQuantity
+        : 1;
+
+    const requestedVariant =
+      queryVariant ||
+      (typeof body.variant ===
+      "string"
+        ? body.variant
+        : "");
+
+    if (
+      product.variants.length >
+        0 &&
+      !requestedVariant
+    ) {
+      return actionResponse(
+        {
+          message:
+            "A variant is required",
+        },
+        400,
+      );
+    }
+
+    const variant =
+      requestedVariant
+        ? product.variants.find(
+            (item) =>
+              item.value ===
+              requestedVariant,
+          )
+        : undefined;
+
+    if (
+      requestedVariant &&
+      !variant
+    ) {
+      return actionResponse(
+        {
+          message:
+            "Selected variant is not available",
+        },
+        409,
+      );
+    }
+
+    if (
+      variant &&
+      variant.inventory <= 0
+    ) {
+      return actionResponse(
+        {
+          message:
+            `Variant ${variant.value} is out of stock`,
+        },
+        409,
+      );
+    }
+
+    if (
+      quantity < 1 ||
+      quantity >
+        product.inventory ||
+      (variant &&
+        quantity >
+          variant.inventory)
+    ) {
+      return actionResponse(
+        {
+          message:
+            "Insufficient inventory",
+        },
+        409,
+      );
+    }
+
+    const order =
+      store.createOrder({
+        productId:
+          product.id,
+
+        merchantId:
+          product.merchantId,
+
+        buyerWallet:
+          body.account,
+
+        variant:
+          variant?.value,
+
+        quantity,
+
+        amountUsdc:
+          product.priceUsdc *
+          quantity,
+      });
+
+    if (!order) {
+      return actionResponse(
+        {
+          message:
+            "Insufficient inventory",
+        },
+        409,
+      );
+    }
+
+    orderId = order.id;
+
+    const transaction =
+      await createUsdcTransferTransaction(
+        body.account,
+        order.amountUsdc,
+      );
+
+    const callbackUrl =
+      publicOrigin(request.url) +
+      `/api/actions/product/${product.id}/confirm` +
+      `?orderId=${encodeURIComponent(order.id)}`;
+
+    return actionResponse({
+      transaction:
+        transaction.serializedTransaction,
+
+      message:
+        `Pay ${order.amountUsdc} USDC for ${product.name}`,
+
+      orderId:
+        order.id,
+
+      links: {
+        next: {
+          type: "post",
+
+          href: callbackUrl,
+        },
+      },
+
+      ...(process.env.NODE_ENV !== "production"
+        ? {
+            serializedTransaction: transaction.serializedTransaction,
+            blockhash: transaction.blockhash,
+            merchantWallet: transaction.merchantWallet,
+            usdcMint: transaction.usdcMint,
+          }
+        : {}),
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to create transaction";
-    console.error("action transaction failed", message);
-    const configured = Boolean(getSolanaConfig().usdcMint && getSolanaConfig().merchantWallet);
-    return actionResponse({ error: configured ? "Unable to create payment transaction" : "Solana payment configuration is missing" }, configured ? 502 : 503);
+    if (orderId) {
+      store.markFailed(
+        orderId,
+      );
+    }
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to create transaction";
+
+    console.error(
+      "action transaction failed",
+      message,
+    );
+
+    const config =
+      getSolanaConfig();
+
+    const configured =
+      Boolean(
+        config.usdcMint &&
+          config.merchantWallet,
+      );
+
+    return actionResponse(
+      {
+        message: configured
+          ? "Unable to create payment transaction"
+          : "Solana payment configuration is missing",
+
+        ...(process.env
+          .NODE_ENV !==
+        "production"
+          ? {
+              debug: message,
+            }
+          : {}),
+      },
+
+      configured
+        ? 502
+        : 503,
+    );
   }
 }

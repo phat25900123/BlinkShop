@@ -25,38 +25,154 @@ export async function createUsdcTransferTransaction(buyerWallet: string, amountU
   ]);
   const amount = BigInt(Math.round(amountUsdc * 1_000_000));
   const transaction = new Transaction({ blockhash: latestBlockhash.blockhash, lastValidBlockHeight: latestBlockhash.lastValidBlockHeight, feePayer: buyer });
-  try {
-    await getAccount(connection, merchantTokenAccount);
-  } catch {
-    transaction.add(createAssociatedTokenAccountInstruction(buyer, merchantTokenAccount, merchant, mint));
-  }
-  transaction.add(createTransferInstruction(buyerTokenAccount, merchantTokenAccount, buyer, amount));
+const [buyerAccount, merchantAccount] = await Promise.all([
+  getAccount(connection, buyerTokenAccount).catch(() => null),
+  getAccount(connection, merchantTokenAccount).catch(() => null),
+]);
+
+// Buyer chưa có USDC ATA → tạo ATA cho buyer
+if (!buyerAccount) {
+  transaction.add(
+    createAssociatedTokenAccountInstruction(
+      buyer,              // payer
+      buyerTokenAccount,  // ATA address
+      buyer,              // owner
+      mint,
+    ),
+  );
+}
+
+// Merchant chưa có USDC ATA → tạo ATA cho merchant
+if (!merchantAccount) {
+  transaction.add(
+    createAssociatedTokenAccountInstruction(
+      buyer,                 // payer
+      merchantTokenAccount,  // ATA address
+      merchant,              // owner
+      mint,
+    ),
+  );
+}
+transaction.add(
+  createTransferInstruction(
+    buyerTokenAccount,
+    merchantTokenAccount,
+    buyer,
+    amount,
+  ),
+);
   return { serializedTransaction: transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64"), blockhash: latestBlockhash.blockhash, merchantWallet: merchant.toBase58(), usdcMint: mint.toBase58() };
 }
 
-export async function verifyUsdcPayment(signature: string, expected: { buyerWallet: string; amountUsdc: number }) {
+export type PaymentVerification = "valid" | "invalid" | "pending";
+
+export async function verifyUsdcPayment(signature: string, expected: { buyerWallet: string; amountUsdc: number }): Promise<PaymentVerification> {
   const { mint, merchant } = requireConfig();
   const connection = new Connection(rpcUrl, "confirmed");
   const transaction = await connection.getParsedTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-  if (!transaction || transaction.meta?.err) return false;
+  if (!transaction) return "pending";
+  if (transaction.meta?.err) return "invalid";
   const expectedAmount = Math.round(expected.amountUsdc * 1_000_000);
   const buyer = new PublicKey(expected.buyerWallet).toBase58();
-  const merchantTokenAccount = (await getAssociatedTokenAddress(mint, merchant)).toBase58();
-  const tokenBalanceDelta = (owner: string, direction: "in" | "out") => {
-    const before = transaction.meta?.preTokenBalances?.find((balance) => balance.owner === owner && balance.mint === mint.toBase58());
-    const after = transaction.meta?.postTokenBalances?.find((balance) => balance.owner === owner && balance.mint === mint.toBase58());
-    const beforeAmount = Number(before?.uiTokenAmount.amount || 0);
-    const afterAmount = Number(after?.uiTokenAmount.amount || 0);
-    const delta = afterAmount - beforeAmount;
-    return direction === "in" ? delta === expectedAmount : delta === -expectedAmount;
-  };
-  const hasTransfer = transaction.transaction.message.instructions.some((instruction) => {
-    if (!("parsed" in instruction) || instruction.program !== "spl-token") return false;
-    const parsed = instruction.parsed as { type?: string; info?: { authority?: string; source?: string; destination?: string; amount?: string; mint?: string } };
-    if (parsed.type !== "transfer" && parsed.type !== "transferChecked") return false;
-    const info = parsed.info;
-    const transferredAmount = info?.amount || (parsed.type === "transferChecked" ? (info as { tokenAmount?: { amount?: string } } | undefined)?.tokenAmount?.amount : undefined);
-    return Boolean(info && transferredAmount === String(expectedAmount) && info.authority === buyer && info.destination === merchantTokenAccount);
-  });
-  return hasTransfer && tokenBalanceDelta(merchant.toBase58(), "in") && tokenBalanceDelta(buyer, "out");
+const buyerTokenAccount = (
+  await getAssociatedTokenAddress(mint, new PublicKey(buyer))
+).toBase58();
+
+const merchantTokenAccount = (
+  await getAssociatedTokenAddress(mint, merchant)
+).toBase58();
+
+const tokenBalanceDelta = (
+  owner: string,
+  direction: "in" | "out"
+) => {
+  const before = transaction.meta?.preTokenBalances?.find(
+    (balance) =>
+      balance.owner === owner &&
+      balance.mint === mint.toBase58()
+  );
+
+  const after = transaction.meta?.postTokenBalances?.find(
+    (balance) =>
+      balance.owner === owner &&
+      balance.mint === mint.toBase58()
+  );
+
+  const beforeAmount = Number(
+    before?.uiTokenAmount.amount || 0
+  );
+
+  const afterAmount = Number(
+    after?.uiTokenAmount.amount || 0
+  );
+
+  const delta = afterAmount - beforeAmount;
+
+  return direction === "in"
+    ? delta === expectedAmount
+    : delta === -expectedAmount;
+};
+
+const hasTransfer =
+  transaction.transaction.message.instructions.some(
+    (instruction) => {
+      if (
+        !("parsed" in instruction) ||
+        instruction.program !== "spl-token"
+      ) {
+        return false;
+      }
+
+      const parsed = instruction.parsed as {
+        type?: string;
+        info?: {
+          authority?: string;
+          source?: string;
+          destination?: string;
+          amount?: string;
+          mint?: string;
+          tokenAmount?: {
+            amount?: string;
+            mint?: string;
+          };
+        };
+      };
+
+      if (
+        parsed.type !== "transfer" &&
+        parsed.type !== "transferChecked"
+      ) {
+        return false;
+      }
+
+      const info = parsed.info;
+
+      if (!info) return false;
+
+      const transferredAmount =
+        parsed.type === "transferChecked"
+          ? info.tokenAmount?.amount
+          : info.amount;
+
+      const transferredMint =
+        parsed.type === "transferChecked"
+          ? info.tokenAmount?.mint
+          : info.mint;
+
+      return (
+        transferredAmount === String(expectedAmount) &&
+        info.authority === buyer &&
+        info.source === buyerTokenAccount &&
+        info.destination === merchantTokenAccount &&
+        (!transferredMint ||
+          transferredMint === mint.toBase58())
+      );
+    }
+  );
+
+return hasTransfer &&
+  tokenBalanceDelta(merchant.toBase58(), "in") &&
+  tokenBalanceDelta(buyer, "out")
+  ? "valid"
+  : "invalid";
 }

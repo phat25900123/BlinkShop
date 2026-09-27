@@ -32,6 +32,8 @@ export type Order = {
   amountUsdc: number;
   txSignature?: string;
   status: OrderStatus;
+  inventoryReserved: boolean;
   createdAt: string;
   updatedAt: string;
+  expiresAt: string;
 };
