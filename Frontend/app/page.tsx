@@ -1645,7 +1645,7 @@ const greeting =
           }
         >
           <section
-            className="checkout-modal product-form-modal"
+            className="checkout-modal quick-checkout-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="quick-checkout-title"
@@ -1947,7 +1947,7 @@ const greeting =
           }
         >
           <section
-            className="checkout-modal"
+            className="checkout-modal product-form-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="create-product-title"
