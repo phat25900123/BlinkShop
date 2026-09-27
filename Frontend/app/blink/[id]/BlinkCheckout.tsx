@@ -244,7 +244,7 @@ export function BlinkCheckout({ product }: { product: Product }) {
                   onClick={() => { setVariant(item.value); setQuantity(1); setMessage(""); setStatus("idle"); }}
                   title={soldOut ? "Out of stock" : `${item.inventory} available`}
                 >
-                  <span>{item.value}</span><small>{soldOut ? "Sold out" : item.inventory}</small>
+                  <span>{item.value}</span><small>{soldOut ? "Sold out" : `${item.inventory} available`}</small>
                 </button>
               );
             })}

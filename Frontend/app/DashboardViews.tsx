@@ -31,6 +31,8 @@ type Props = {
   orders: DashboardOrder[];
   onProductsChange: (products: DashboardProduct[]) => void;
   onCreateProduct: () => void;
+  isLoading: boolean;
+  loadError: string;
 };
 
 function shortAddress(value: string) {
@@ -53,6 +55,8 @@ export function DashboardViews({
   orders,
   onProductsChange,
   onCreateProduct,
+  isLoading,
+  loadError,
 }: Props) {
   const [editing, setEditing] = useState<DashboardProduct | null>(null);
   const [message, setMessage] = useState("");
@@ -184,7 +188,10 @@ export function DashboardViews({
           </div>
         </div>
 
-        {orders.length > 0 ? (
+        {loadError && <p className="inline-alert error" role="alert">{loadError}</p>}
+        {isLoading ? (
+          <div className="loading-panel" role="status">Loading orders…</div>
+        ) : orders.length > 0 ? (
           <section className="orders-table orders-table-full" aria-label="Orders">
             <div className="table-row table-row-full table-head">
               <span>Order</span><span>Product</span><span>Buyer</span><span>Variant</span>
@@ -201,7 +208,7 @@ export function DashboardViews({
                 <span className={`order-status ${statusClass(order.status)}`}><i />{order.status}</span>
                 <time className="muted">{order.time}</time>
                 {order.txSignature ? (
-                  <a className="table-link" href={`https://explorer.solana.com/tx/${order.txSignature}?cluster=devnet`} target="_blank" rel="noreferrer" title={order.txSignature}>View tx ↗</a>
+                  <a className="table-link table-link-button" href={`https://explorer.solana.com/tx/${order.txSignature}?cluster=devnet`} target="_blank" rel="noreferrer" title={order.txSignature}>View tx ↗</a>
                 ) : <span className="muted">—</span>}
               </div>
             ))}
@@ -224,22 +231,31 @@ export function DashboardViews({
           </div>
         </div>
 
+        {loadError && <p className="inline-alert error" role="alert">{loadError}</p>}
         {message && <p className="inline-alert error" role="alert">{message}</p>}
-        {products.length > 0 ? (
+        {isLoading ? (
+          <div className="loading-panel" role="status">Loading Blink links…</div>
+        ) : products.length > 0 ? (
           <section className="link-list">
             {products.map((product) => (
               <article className="link-row" key={product.id}>
+                <div
+                  className="link-thumbnail"
+                  role="img"
+                  aria-label={product.name}
+                  style={product.image ? { backgroundImage: `url(${product.image})` } : undefined}
+                />
                 <div className="link-product"><strong>{product.name}</strong><span>/blink/{product.id}</span></div>
                 <div className="link-meta"><b>{product.price.toFixed(2)} USDC</b><span className={`status-badge ${statusClass(product.status)}`}>{product.status}</span></div>
                 <div className="link-actions">
-                  <a className="secondary-button" href={`/blink/${product.id}`} target="_blank" rel="noreferrer">Open Blink ↗</a>
-                  <button className="primary-button compact" type="button" onClick={() => void copyLink(product.id)}>{copiedId === product.id ? "Copied ✓" : "Copy link"}</button>
+                  <a className="primary-button compact" href={`/blink/${product.id}`} target="_blank" rel="noreferrer">Open Blink ↗</a>
+                  <button className="secondary-button" type="button" onClick={() => void copyLink(product.id)}>{copiedId === product.id ? "Copied ✓" : "Copy link"}</button>
                 </div>
               </article>
             ))}
           </section>
         ) : (
-          <div className="empty-state"><strong>No Blink links yet</strong><p>Create a product to generate its first checkout link.</p></div>
+          <div className="empty-state"><strong>No Blink links yet</strong><p>Create a product to generate a shareable checkout link.</p></div>
         )}
       </section>
     );
@@ -256,8 +272,11 @@ export function DashboardViews({
         <button className="primary-button" type="button" onClick={onCreateProduct}><span>＋</span> Create product</button>
       </div>
 
+      {loadError && <p className="inline-alert error" role="alert">{loadError}</p>}
       {message && <p className="inline-alert error" role="alert">{message}</p>}
-      {products.length > 0 ? (
+      {isLoading ? (
+        <div className="loading-panel" role="status">Loading products…</div>
+      ) : products.length > 0 ? (
         <section className="manage-grid">
           {products.map((product) => (
             <article className="manage-card" key={product.id}>
@@ -265,27 +284,41 @@ export function DashboardViews({
                 <span className={`status-badge ${statusClass(product.status)}`}>{product.status}</span>
               </div>
               <div className="manage-card-body">
-                <div className="manage-card-top"><div><h3>{product.name}</h3><p>{product.price.toFixed(2)} USDC · {productStock(product)} in stock</p></div></div>
-                {product.variants.length > 0 && <p className="variant-summary">{product.variants.map((item) => `${item.value}: ${item.inventory}`).join(" · ")}</p>}
+                <div className="manage-card-top">
+                  <div>
+                    <h3>{product.name}</h3>
+                    <p className="manage-price">{product.price.toFixed(2)} <span>USDC</span></p>
+                    <p className="manage-stock">{productStock(product)} units in stock</p>
+                  </div>
+                </div>
+                {product.variants.length > 0 && (
+                  <div className="variant-summary" aria-label="Variant inventory">
+                    {product.variants.map((item) => (
+                      <span className={item.inventory <= 0 ? "sold-out" : ""} key={item.id}>
+                        <b>{item.value}</b>{item.inventory <= 0 ? "Sold out" : item.inventory}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="manage-actions">
-                  <button className="text-button" type="button" onClick={() => setEditing({ ...product, variants: product.variants.map((item) => ({ ...item })) })}>Edit</button>
-                  <a className="text-button link-button" href={`/blink/${product.id}`} target="_blank" rel="noreferrer">Open Blink ↗</a>
-                  <button className="text-button" type="button" onClick={() => void copyLink(product.id)}>{copiedId === product.id ? "Copied ✓" : "Copy link"}</button>
-                  <button className="text-button danger-text" type="button" onClick={() => void deleteProduct(product.id)}>Delete</button>
+                  <a className="primary-button compact" href={`/blink/${product.id}`} target="_blank" rel="noreferrer">Open Blink ↗</a>
+                  <button className="secondary-button" type="button" onClick={() => setEditing({ ...product, variants: product.variants.map((item) => ({ ...item })) })}>Edit</button>
+                  <button className="secondary-button" type="button" onClick={() => void copyLink(product.id)}>{copiedId === product.id ? "Copied ✓" : "Copy link"}</button>
+                  <button className="danger-button" type="button" onClick={() => void deleteProduct(product.id)}>Delete</button>
                 </div>
               </div>
             </article>
           ))}
         </section>
       ) : (
-        <div className="empty-state"><strong>No products yet</strong><p>Create your first product to start sharing a Blink.</p></div>
+        <div className="empty-state"><strong>No products yet</strong><p>Create your first product to generate a Blink.</p></div>
       )}
 
       {editing && (
         <div className="modal-backdrop" onClick={() => setEditing(null)}>
-          <form className="edit-panel" onSubmit={saveProduct} onClick={(event) => event.stopPropagation()}>
+          <form className="edit-panel" role="dialog" aria-modal="true" aria-labelledby="edit-product-title" onSubmit={saveProduct} onClick={(event) => event.stopPropagation()}>
             <button className="close-button" type="button" aria-label="Close editor" onClick={() => setEditing(null)}>×</button>
-            <div className="checkout-eyebrow">EDIT PRODUCT</div><h2>{editing.name}</h2>
+            <div className="checkout-eyebrow">EDIT PRODUCT</div><h2 id="edit-product-title">{editing.name}</h2>
             <label>Name<input required value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label>
             <label>Description<textarea rows={3} value={editing.description} onChange={(event) => setEditing({ ...editing, description: event.target.value })} /></label>
             <label>Price in USDC<input required min="0.01" step="0.01" type="number" value={editing.price} onChange={(event) => setEditing({ ...editing, price: Number(event.target.value) })} /></label>

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -68,6 +69,29 @@ type ProductFormVariant = {
   value: string;
   inventory: string;
 };
+
+type InterfaceLanguage = "en" | "vi";
+
+const navigationCopy: Record<string, Record<InterfaceLanguage, string>> = {
+  Overview: { en: "Overview", vi: "Tổng quan" },
+  Products: { en: "Products", vi: "Sản phẩm" },
+  Orders: { en: "Orders", vi: "Đơn hàng" },
+  "Blink links": { en: "Blink links", vi: "Liên kết Blink" },
+  Settings: { en: "Settings", vi: "Cài đặt" },
+};
+
+function navigationLabel(view: string, language: InterfaceLanguage) {
+  return navigationCopy[view]?.[language] || view;
+}
+
+function GlobeIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3c2.5 2.6 3.7 5.6 3.7 9S14.5 18.4 12 21c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3Z" />
+    </svg>
+  );
+}
 
 function toProduct(product: ApiProduct): Product {
   return {
@@ -172,7 +196,7 @@ function SettingsView() {
           <strong>Solana Devnet</strong>
 
           <div className="stat-foot">
-            <span>Development environment</span>
+            <span>Hackathon network</span>
           </div>
         </article>
 
@@ -253,11 +277,11 @@ function SettingsView() {
       <section className="section-header orders-heading">
         <div>
           <h2 className="section-title">
-            Development mode
+            Deployment profile
           </h2>
 
           <p className="section-description">
-            BlinkShop is currently running on Solana Devnet for testing.
+            Public hackathon demo on Solana Devnet and Railway.
           </p>
         </div>
       </section>
@@ -270,7 +294,7 @@ function SettingsView() {
           </div>
 
           <span className="settings-badge">
-            DEVNET
+            Hackathon
           </span>
         </div>
 
@@ -281,18 +305,19 @@ function SettingsView() {
           </div>
 
           <span className="settings-badge">
-            Connected when available
+            Browser wallet
           </span>
         </div>
 
         <div className="settings-row">
           <div>
             <strong>Data persistence</strong>
-            <p>Local JSON for development; Supabase migration is staged for production.</p>
+            <p>Persistent JSON store on a Railway Volume.</p>
+            <small>Single-instance demo persistence. Supabase migration is staged for future production scaling.</small>
           </div>
 
-          <span className="settings-badge">
-            Local only
+          <span className="settings-badge persistent">
+            Persistent
           </span>
         </div>
       </section>
@@ -302,6 +327,9 @@ function SettingsView() {
 
 export default function Home() {
 const [active, setActive] = useState("Overview");
+  const [language, setLanguage] = useState<InterfaceLanguage>("en");
+  const [openTopMenu, setOpenTopMenu] = useState<"language" | "account" | null>(null);
+  const topActionsRef = useRef<HTMLDivElement>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
@@ -462,6 +490,53 @@ useEffect(() => {
     cancelled = true;
   };
 }, [fetchDashboardData]);
+
+useEffect(() => {
+  const savedLanguage = window.localStorage.getItem("blinkshop-language");
+  if (savedLanguage === "en" || savedLanguage === "vi") {
+    const timer = window.setTimeout(() => setLanguage(savedLanguage), 0);
+    return () => window.clearTimeout(timer);
+  }
+}, []);
+
+useEffect(() => {
+  document.documentElement.setAttribute("lang", language);
+}, [language]);
+
+useEffect(() => {
+  if (!openTopMenu) {
+    return;
+  }
+
+  const closeOnOutsideClick = (event: PointerEvent) => {
+    if (
+      topActionsRef.current &&
+      !topActionsRef.current.contains(event.target as Node)
+    ) {
+      setOpenTopMenu(null);
+    }
+  };
+
+  const closeOnEscape = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      setOpenTopMenu(null);
+    }
+  };
+
+  document.addEventListener("pointerdown", closeOnOutsideClick);
+  document.addEventListener("keydown", closeOnEscape);
+
+  return () => {
+    document.removeEventListener("pointerdown", closeOnOutsideClick);
+    document.removeEventListener("keydown", closeOnEscape);
+  };
+}, [openTopMenu]);
+
+  const selectLanguage = (nextLanguage: InterfaceLanguage) => {
+    setLanguage(nextLanguage);
+    window.localStorage.setItem("blinkshop-language", nextLanguage);
+    setOpenTopMenu(null);
+  };
 
 useEffect(() => {
   const requestedView = new URLSearchParams(window.location.search).get("view");
@@ -991,7 +1066,7 @@ const greeting =
             <small>Merchant workspace</small>
           </span>
 
-          <span className="chevron">⌄</span>
+          <span className="workspace-tag">Demo</span>
         </div>
 
         <nav className="main-nav">
@@ -1013,7 +1088,7 @@ const greeting =
               onClick={() => navigateTo(label)}
             >
               <Icon>{icon}</Icon>
-              {label}
+              {navigationLabel(label, language)}
 
               {label === "Orders" && (
                 <span className="nav-count">
@@ -1036,20 +1111,17 @@ const greeting =
             onClick={() => navigateTo("Settings")}
           >
             <Icon>⚙</Icon>
-            Settings
+            {navigationLabel("Settings", language)}
           </button>
         </nav>
 
         <div className="sidebar-bottom">
           <div className="credit-row">
             <span className="solana-dot" />
-            Solana Devnet
-          </div>
-
-          <div className="help-row">
-            ?
-            <span>Help center</span>
-            <span className="version">v0.1 beta</span>
+            <span>
+              <b>Solana Devnet</b>
+              <small>Hackathon network</small>
+            </span>
           </div>
         </div>
       </aside>
@@ -1058,23 +1130,98 @@ const greeting =
         <header className="topbar">
           <div className="breadcrumb">
             Workspace <span>/</span>{" "}
-            <strong>{active}</strong>
+            <strong>{navigationLabel(active, language)}</strong>
           </div>
 
-          <div className="top-actions">
-            <button
-              className="icon-button"
-              aria-label="Notifications"
-            >
-              ♧
-              <span className="notification-dot" />
-            </button>
+          <div className="top-actions" ref={topActionsRef}>
+            <div className="top-menu-anchor">
+              <button
+                className="icon-button language-button"
+                type="button"
+                aria-label="Choose interface language"
+                aria-haspopup="menu"
+                aria-expanded={openTopMenu === "language"}
+                aria-controls="language-menu"
+                onClick={() => setOpenTopMenu((current) => current === "language" ? null : "language")}
+              >
+                <GlobeIcon />
+                <span>{language.toUpperCase()}</span>
+              </button>
 
-            <button className="profile-button">
-              <span className="avatar small">A</span>
-              <span>Aria</span>
-              <span>⌄</span>
-            </button>
+              {openTopMenu === "language" && (
+                <div className="top-menu language-menu" id="language-menu" role="menu" aria-label="Interface language preview">
+                  <div className="top-menu-heading">
+                    <strong>Interface language preview</strong>
+                    <span>Updates navigation controls in this demo.</span>
+                  </div>
+                  {(["en", "vi"] as const).map((option) => (
+                    <button
+                      className="top-menu-option"
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={language === option}
+                      key={option}
+                      onClick={() => selectLanguage(option)}
+                    >
+                      <span>{option === "en" ? "English" : "Tiếng Việt"}</span>
+                      {language === option && <b aria-hidden="true">✓</b>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="top-menu-anchor">
+              <button
+                className="profile-button"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={openTopMenu === "account"}
+                aria-controls="account-menu"
+                onClick={() => setOpenTopMenu((current) => current === "account" ? null : "account")}
+              >
+                <span className="avatar small">A</span>
+                <span>Aria</span>
+                <span className="profile-chevron" aria-hidden="true">⌄</span>
+              </button>
+
+              {openTopMenu === "account" && (
+                <div className="top-menu account-menu" id="account-menu" role="menu" aria-label="Workspace menu">
+                  <div className="account-summary">
+                    <span className="avatar">A</span>
+                    <div>
+                      <strong>Aria Studio</strong>
+                      <span>Merchant workspace</span>
+                    </div>
+                    <span className="demo-badge">Demo</span>
+                  </div>
+                  <div className="account-detail">
+                    <span>Network</span>
+                    <strong><i /> Solana Devnet</strong>
+                  </div>
+                  <button
+                    className="top-menu-link"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      navigateTo("Settings");
+                      setOpenTopMenu(null);
+                    }}
+                  >
+                    Workspace settings <span>→</span>
+                  </button>
+                  <a
+                    className="top-menu-link"
+                    role="menuitem"
+                    href="https://blinkshop.up.railway.app"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    View deployment <span>↗</span>
+                  </a>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -1087,7 +1234,7 @@ const greeting =
               key={label}
               onClick={() => navigateTo(label)}
             >
-              {label}
+              {navigationLabel(label, language)}
               {label === "Orders" && orders.length > 0 && (
                 <span>{orders.length}</span>
               )}
@@ -1119,6 +1266,8 @@ const greeting =
             onCreateProduct={() =>
               setShowCreateProduct(true)
             }
+            isLoading={isLoading}
+            loadError={loadError}
           />
         ) : (
           <div className="content-inner">
@@ -1142,6 +1291,7 @@ const greeting =
 
               <button
                 className="primary-button"
+                type="button"
                 onClick={() =>
                   setShowCreateProduct(true)
                 }
@@ -1165,7 +1315,7 @@ const greeting =
 
                 <div className="stat-foot">
                   <span>
-                    Confirmed payments
+                    Confirmed revenue
                   </span>
                 </div>
               </article>
@@ -1182,7 +1332,7 @@ const greeting =
 
                 <div className="stat-foot">
                   <span>
-                    All checkout orders
+                    Checkout orders
                   </span>
                 </div>
               </article>
@@ -1199,7 +1349,7 @@ const greeting =
 
                 <div className="stat-foot">
                   <span>
-                    Merchant catalog
+                    Active catalog items
                   </span>
                 </div>
               </article>
@@ -1225,6 +1375,7 @@ const greeting =
 
                 <button
                   className="dark-button"
+                  type="button"
                   onClick={() =>
                     navigateTo("Blink links")
                   }
@@ -1286,6 +1437,7 @@ const greeting =
 
               <button
                 className="text-button"
+                type="button"
                 onClick={() =>
                   navigateTo("Products")
                 }
@@ -1296,29 +1448,13 @@ const greeting =
 
             {!isLoading && <section className="product-grid">
               {products.length === 0 ? (
-                <article className="product-card">
-                  <div className="product-info">
-                    <div>
-                      <h3>No products yet</h3>
-                      <p>
-                        Create your first product to
-                        start sharing a Blink.
-                      </p>
-                    </div>
-
-                    <div className="product-actions">
-                      <button
-                        className="buy-button"
-                        onClick={() =>
-                          setShowCreateProduct(true)
-                        }
-                      >
-                        Create product{" "}
-                        <span>↗</span>
-                      </button>
-                    </div>
-                  </div>
-                </article>
+                <div className="empty-state product-empty-state">
+                  <strong>No products yet</strong>
+                  <p>Create your first product to generate a Blink.</p>
+                  <button className="primary-button" type="button" onClick={() => setShowCreateProduct(true)}>
+                    <span>＋</span> Create product
+                  </button>
+                </div>
               ) : (
                 products.map((product) => (
                   <article
@@ -1349,19 +1485,17 @@ const greeting =
                     </div>
 
                     <div className="product-info">
-                      <div>
+                      <div className="product-card-copy">
                         <h3>{product.name}</h3>
 
-                        <p>
-                          {formatUsdc(product.price)} USDC{" "}
-                          <span>·</span>{" "}
-                          {product.inventory} in stock
-                        </p>
+                        <p className="product-card-price">{formatUsdc(product.price)} <span>USDC</span></p>
+                        <p className="product-card-stock">{product.inventory} in stock</p>
                       </div>
 
                       <div className="product-actions">
                         <button
-                          className="buy-button"
+                          className="card-primary-action"
+                          type="button"
                           onClick={() =>
                             openBlinkUrl(
                               product.id,
@@ -1373,19 +1507,8 @@ const greeting =
                         </button>
 
                         <button
-                          className="buy-button"
+                          className="card-secondary-action"
                           type="button"
-                          disabled={product.inventory <= 0}
-                          onClick={() =>
-                            openCheckout(product)
-                          }
-                        >
-                          Quick pay{" "}
-                          <span>↗</span>
-                        </button>
-
-                        <button
-                          className="buy-button"
                           onClick={() =>
                             void copyBlinkUrl(
                               product.id,
@@ -1394,8 +1517,19 @@ const greeting =
                         >
                           {copiedProductId ===
                           product.id
-                            ? "Copied"
+                            ? "Copied ✓"
                             : "Copy link"}
+                        </button>
+
+                        <button
+                          className="card-tertiary-action"
+                          type="button"
+                          disabled={product.inventory <= 0}
+                          onClick={() =>
+                            openCheckout(product)
+                          }
+                        >
+                          Quick pay
                         </button>
                       </div>
                     </div>
@@ -1418,6 +1552,7 @@ const greeting =
 
               <button
                 className="text-button"
+                type="button"
                 onClick={() =>
                   navigateTo("Orders")
                 }
@@ -1427,17 +1562,18 @@ const greeting =
             </div>
 
             <section className="orders-table">
-              <div className="table-row table-head">
+              <div className="table-row table-head overview-order-row">
                 <span>Order</span>
                 <span>Product</span>
                 <span>Buyer wallet</span>
                 <span>Amount</span>
                 <span>Status</span>
                 <span>Placed</span>
+                <span>Transaction</span>
               </div>
 
               {orders.length === 0 ? (
-                <div className="table-row">
+                <div className="table-row overview-order-row order-empty-row">
                   <span>No orders yet.</span>
                   <span>
                     Your first Blink payment will
@@ -1447,11 +1583,12 @@ const greeting =
                   <span />
                   <span />
                   <span />
+                  <span />
                 </div>
               ) : (
                 orders.slice(0, 5).map((order) => (
                   <div
-                    className="table-row"
+                    className="table-row overview-order-row"
                     key={order.id}
                   >
                     <strong>{order.id}</strong>
@@ -1476,6 +1613,20 @@ const greeting =
                     <span className="muted">
                       {order.time}
                     </span>
+
+                    {order.txSignature ? (
+                      <a
+                        className="table-link"
+                        href={`https://explorer.solana.com/tx/${order.txSignature}?cluster=devnet`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={order.txSignature}
+                      >
+                        View tx ↗
+                      </a>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
                   </div>
                 ))
               )}
@@ -1493,6 +1644,9 @@ const greeting =
         >
           <section
             className="checkout-modal product-form-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="quick-checkout-title"
             onClick={(event) =>
               event.stopPropagation()
             }
@@ -1532,7 +1686,7 @@ const greeting =
                 INSTANT CHECKOUT
               </div>
 
-              <h2>{selectedProduct.name}</h2>
+              <h2 id="quick-checkout-title">{selectedProduct.name}</h2>
 
               <p className="checkout-description">
                 {selectedProduct.description || "A direct, wallet-native purchase from Aria Studio."}
@@ -1557,7 +1711,7 @@ const greeting =
                             variant.value
                               ? "selected"
                               : ""
-                          }`}
+                          } ${variant.inventory <= 0 ? "sold-out" : ""}`}
                           key={variant.id}
                           type="button"
                           disabled={
@@ -1577,10 +1731,8 @@ const greeting =
                             setQuantity(1);
                           }}
                         >
-                          {variant.value}
-
-                          {variant.inventory <= 0 &&
-                            " · Sold out"}
+                          <span>{variant.value}</span>
+                          <small>{variant.inventory <= 0 ? "Sold out" : `${variant.inventory} available`}</small>
                         </button>
                       ),
                     )}
@@ -1794,12 +1946,16 @@ const greeting =
         >
           <section
             className="checkout-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-product-title"
             onClick={(event) =>
               event.stopPropagation()
             }
           >
             <button
               className="close-button"
+              type="button"
               aria-label="Close product form"
               onClick={() =>
                 setShowCreateProduct(false)
@@ -1813,7 +1969,7 @@ const greeting =
                 NEW PRODUCT
               </div>
 
-              <h2>Create product</h2>
+              <h2 id="create-product-title">Create product</h2>
 
               <p className="checkout-description">
                 Add an item to your merchant catalog.
