@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -6,10 +7,16 @@ export const metadata: Metadata = {
   description: "Turn every social post into an instant, onchain checkout.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: ReactNode;
+}>) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+      </body>
     </html>
   );
 }
