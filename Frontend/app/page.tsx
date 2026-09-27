@@ -1292,13 +1292,14 @@ const greeting =
               </div>
 
               <button
-                className="primary-button"
+                className="primary-button create-product-button"
                 type="button"
                 onClick={() =>
                   setShowCreateProduct(true)
                 }
               >
-                <span>＋</span> Create product
+                <span className="create-product-icon" aria-hidden="true" />
+                Create product
               </button>
             </div>
 
@@ -1453,8 +1454,9 @@ const greeting =
                 <div className="empty-state product-empty-state">
                   <strong>No products yet</strong>
                   <p>Create your first product to generate a Blink.</p>
-                  <button className="primary-button" type="button" onClick={() => setShowCreateProduct(true)}>
-                    <span>＋</span> Create product
+                  <button className="primary-button create-product-button" type="button" onClick={() => setShowCreateProduct(true)}>
+                    <span className="create-product-icon" aria-hidden="true" />
+                    Create product
                   </button>
                 </div>
               ) : (

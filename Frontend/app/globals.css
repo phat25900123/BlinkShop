@@ -604,6 +604,44 @@ body {
   padding: 10px 15px;
 }
 
+.create-product-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+}
+
+.primary-button .create-product-icon {
+  position: relative;
+  display: block;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  font-size: 0;
+  line-height: 0;
+}
+
+.create-product-icon::before,
+.create-product-icon::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.create-product-icon::before {
+  width: 12px;
+  height: 2px;
+}
+
+.create-product-icon::after {
+  width: 2px;
+  height: 12px;
+}
+
 .primary-button.compact {
   min-height: 36px;
   padding: 8px 13px;
