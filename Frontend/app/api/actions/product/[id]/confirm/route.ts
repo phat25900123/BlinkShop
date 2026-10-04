@@ -106,13 +106,6 @@ if (order.status === "failed") {
 
     const existing = store.findOrderBySignature(body.signature);
     if (existing && existing.id !== order.id) return actionResponse({ message: "Transaction signature already used" }, 409);
-    const attachedOrder = store.attachSignature(order.id, body.signature);
-    if (!attachedOrder) {
-      return actionResponse(
-        { message: "Order already has a different transaction signature" },
-        409,
-      );
-    }
     const verification = await verifyWithRetry(body.signature, { buyerWallet: order.buyerWallet, amountUsdc: order.amountUsdc });
     if (verification === "pending") {
   return actionResponse(
@@ -124,18 +117,51 @@ if (order.status === "failed") {
 }
 
 if (verification === "invalid") {
-  const failedOrder = store.markFailed(order.id);
-
   return actionResponse(
     {
       message: "Payment could not be verified",
-      order: failedOrder,
+      order: store.getOrder(order.id),
     },
     422,
   );
 }
 
-const paidOrder = store.markPaid(order.id);
+const confirmation = store.confirmVerifiedPayment(order.id, body.signature);
+
+if (confirmation.result === "not_found") {
+  return actionResponse({ message: "Order not found" }, 404);
+}
+
+if (confirmation.result === "cancelled") {
+  return actionResponse({ message: "Order has expired" }, 409);
+}
+
+if (confirmation.result === "failed") {
+  return actionResponse(
+    { message: "Order is no longer payable. Please create a new order." },
+    409,
+  );
+}
+
+if (confirmation.result === "signature_used") {
+  return actionResponse({ message: "Transaction signature already used" }, 409);
+}
+
+if (confirmation.result === "signature_conflict") {
+  return actionResponse(
+    { message: "Order already has a different transaction signature" },
+    409,
+  );
+}
+
+if (confirmation.result === "state_error") {
+  return actionResponse(
+    { message: "Payment was verified but the order state could not be updated" },
+    500,
+  );
+}
+
+const paidOrder = confirmation.order;
 const product = store.getProduct(order.productId);
 
 if (!paidOrder || !product) {

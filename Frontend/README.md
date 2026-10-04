@@ -91,7 +91,8 @@ Production Action responses omit development-only blockhash, merchant-wallet, mi
 - A pending order expires after ten minutes.
 - Expired orders become `cancelled` and release their reservation.
 - A valid payment becomes `paid`; its signature is retained for audit and Explorer links.
-- An invalid payment becomes `failed` and releases inventory.
+- A pending or invalid submitted signature stays unbound; the order remains pending and reserved until valid confirmation or normal expiry.
+- A server-side transaction-construction failure becomes `failed` and releases inventory.
 - Paid orders retain `expiresAt` as the original reservation deadline/audit field; it no longer controls the paid state.
 
 ## Security checks
@@ -115,7 +116,7 @@ Order-to-transaction memo binding (test 4F) is intentionally deferred. A future 
 - Immutable `txSignature` storage with duplicate-use protection.
 - JSON persistence on a Railway persistent Volume at `/data` for the single deployed instance.
 - GitHub CI for install, typecheck, automated tests, lint, and production build.
-- 23 deterministic automated tests across inventory, order lifecycle, signature protection, and payment validation.
+- 32 deterministic automated tests across inventory, order lifecycle, confirmation-state integrity, signature protection, and payment validation.
 
 ## Tech stack
 

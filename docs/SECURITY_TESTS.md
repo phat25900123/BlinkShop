@@ -2,7 +2,7 @@
 
 The deterministic suite lives in `Frontend/tests/` and runs with `npm test`. It uses an in-memory store and parsed-transaction fixtures: no Phantom session, public RPC, Railway service, or funded wallet is required.
 
-Last local verification for this submission hardening pass: **23 tests across 4 test files passed**. The final quality-gate results should also be checked in the task report or CI run for the commit under review.
+Last local verification for this submission hardening pass: **32 tests across 5 test files passed**. The final quality-gate results should also be checked in the task report or CI run for the commit under review.
 
 ## Results
 
@@ -14,6 +14,8 @@ Last local verification for this submission hardening pass: **23 tests across 4 
 | 4D — Wrong amount | Backend rejects a mismatched transfer amount. | Automated parsed-transaction validation test. | PASS |
 | 4E — Wrong buyer | Backend rejects an unexpected authority or source token account. | Automated authority and source-account tests. | PASS |
 | Signature overwrite | A different second signature cannot replace the first attached signature. | Automated confirmation-route immutability test. | PASS |
+| Pending signature poisoning | An unverified signature is not attached and the reservation remains intact. | Automated tests for generic and Solana Action confirmation routes. | PASS |
+| Invalid signature poisoning | An arbitrary invalid signature cannot fail the order or release inventory. | Automated tests for generic and Solana Action confirmation routes. | PASS |
 | Pending expiry | An expired pending order releases its reservation once. | Fake-clock lifecycle test using the ten-minute deadline. | PASS |
 | Failed payment | A failed order releases inventory safely and cannot double-release it. | Automated lifecycle tests. | PASS |
 | Merchant/mint/deltas | Wrong recipient, wrong mint, or incorrect buyer/merchant balance delta is rejected. | Automated parsed-transaction validation tests. | PASS |

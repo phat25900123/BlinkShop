@@ -425,8 +425,8 @@ export const store = {
             : variant,
       );
 
-    // Reserve stock before transaction construction. If construction or
-    // verification fails, markFailed releases this exact reservation.
+    // Reserve stock before transaction construction. If construction fails,
+    // markFailed releases this exact reservation.
     products.set(
       product.id,
       refreshStatus({
@@ -488,8 +488,8 @@ export const store = {
       return undefined;
     }
 
-    // A pending order is permanently bound to the first signature attached
-    // to it. Retrying the same signature is idempotent; replacing it is not.
+    // Confirmation routes call this only after Solana verification succeeds.
+    // Retrying that verified signature is idempotent; replacing it is not.
     if (
       order.txSignature &&
       order.txSignature !== signature
@@ -519,6 +519,103 @@ export const store = {
     persistState();
 
     return updated;
+  },
+
+  confirmVerifiedPayment(
+    id: string,
+    signature: string,
+  ) {
+    // Verification is asynchronous, so re-read all mutable order/signature
+    // state immediately before the synchronous duplicate-check-and-attach step.
+    const order = store.getOrder(id);
+
+    if (!order) {
+      return { result: "not_found" as const };
+    }
+
+    if (order.status === "cancelled") {
+      return { result: "cancelled" as const };
+    }
+
+    if (order.status === "failed") {
+      return { result: "failed" as const };
+    }
+
+    if (
+      order.txSignature &&
+      order.txSignature !== signature
+    ) {
+      return { result: "signature_conflict" as const };
+    }
+
+    if (order.status === "paid") {
+      return order.txSignature === signature
+        ? {
+            result: "paid" as const,
+            order,
+            duplicate: true,
+          }
+        : { result: "state_error" as const };
+    }
+
+    const existing =
+      store.findOrderBySignature(signature);
+
+    if (existing && existing.id !== order.id) {
+      return { result: "signature_used" as const };
+    }
+
+    // findOrderBySignature also applies normal expiry. Re-read once more so an
+    // order crossing its deadline during these synchronous checks stays unbound.
+    const currentOrder = store.getOrder(id);
+
+    if (!currentOrder) {
+      return { result: "not_found" as const };
+    }
+
+    if (currentOrder.status === "cancelled") {
+      return { result: "cancelled" as const };
+    }
+
+    if (currentOrder.status === "failed") {
+      return { result: "failed" as const };
+    }
+
+    if (
+      currentOrder.txSignature &&
+      currentOrder.txSignature !== signature
+    ) {
+      return { result: "signature_conflict" as const };
+    }
+
+    if (currentOrder.status === "paid") {
+      return currentOrder.txSignature === signature
+        ? {
+            result: "paid" as const,
+            order: currentOrder,
+            duplicate: true,
+          }
+        : { result: "state_error" as const };
+    }
+
+    // No await is allowed between the duplicate check and attachment in the
+    // single-instance store, so another request cannot interleave here.
+    const attached =
+      store.attachSignature(currentOrder.id, signature);
+
+    if (!attached) {
+      return { result: "signature_conflict" as const };
+    }
+
+    const paid = store.markPaid(order.id);
+
+    return paid
+      ? {
+          result: "paid" as const,
+          order: paid,
+          duplicate: false,
+        }
+      : { result: "state_error" as const };
   },
 
   markPaid(id: string) {
