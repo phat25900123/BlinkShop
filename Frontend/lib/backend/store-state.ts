@@ -51,8 +51,7 @@ function createState(): BlinkShopState {
       ]),
     ),
 
-    // Nếu store.json đã tồn tại thì không
-    // seed lại sản phẩm mặc định.
+    // An existing store is authoritative; never seed demo products over it.
     initialized: persisted.exists,
   };
 }

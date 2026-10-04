@@ -1,4 +1,9 @@
-import { Connection, PublicKey, Transaction } from "@solana/web3.js";
+import {
+  Connection,
+  PublicKey,
+  Transaction,
+  type ParsedTransactionWithMeta,
+} from "@solana/web3.js";
 import { createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
 
 const rpcUrl = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
@@ -66,6 +71,120 @@ transaction.add(
 
 export type PaymentVerification = "valid" | "invalid" | "pending";
 
+type PaymentValidationExpectation = {
+  amountBaseUnits: number;
+  buyer: string;
+  buyerTokenAccount: string;
+  merchant: string;
+  merchantTokenAccount: string;
+  mint: string;
+};
+
+/**
+ * Validates only transaction evidence fetched from Solana against server-owned
+ * expectations. Client-reported payment success, amount, and destination never
+ * participate in this decision.
+ */
+export function validateUsdcPaymentTransaction(
+  transaction: ParsedTransactionWithMeta,
+  expected: PaymentValidationExpectation,
+) {
+  if (transaction.meta?.err) return false;
+
+  const tokenBalanceDelta = (
+    owner: string,
+    direction: "in" | "out",
+  ) => {
+    const before = transaction.meta?.preTokenBalances?.find(
+      (balance) =>
+        balance.owner === owner &&
+        balance.mint === expected.mint,
+    );
+
+    const after = transaction.meta?.postTokenBalances?.find(
+      (balance) =>
+        balance.owner === owner &&
+        balance.mint === expected.mint,
+    );
+
+    const beforeAmount = Number(
+      before?.uiTokenAmount.amount || 0,
+    );
+
+    const afterAmount = Number(
+      after?.uiTokenAmount.amount || 0,
+    );
+
+    const delta = afterAmount - beforeAmount;
+
+    return direction === "in"
+      ? delta === expected.amountBaseUnits
+      : delta === -expected.amountBaseUnits;
+  };
+
+  const hasTransfer =
+    transaction.transaction.message.instructions.some(
+      (instruction) => {
+        if (
+          !("parsed" in instruction) ||
+          instruction.program !== "spl-token"
+        ) {
+          return false;
+        }
+
+        const parsed = instruction.parsed as {
+          type?: string;
+          info?: {
+            authority?: string;
+            source?: string;
+            destination?: string;
+            amount?: string;
+            mint?: string;
+            tokenAmount?: {
+              amount?: string;
+              mint?: string;
+            };
+          };
+        };
+
+        if (
+          parsed.type !== "transfer" &&
+          parsed.type !== "transferChecked"
+        ) {
+          return false;
+        }
+
+        const info = parsed.info;
+
+        if (!info) return false;
+
+        const transferredAmount =
+          parsed.type === "transferChecked"
+            ? info.tokenAmount?.amount
+            : info.amount;
+
+        const transferredMint =
+          parsed.type === "transferChecked"
+            ? info.tokenAmount?.mint
+            : info.mint;
+
+        return (
+          transferredAmount === String(expected.amountBaseUnits) &&
+          info.authority === expected.buyer &&
+          info.source === expected.buyerTokenAccount &&
+          info.destination === expected.merchantTokenAccount &&
+          (!transferredMint || transferredMint === expected.mint)
+        );
+      },
+    );
+
+  return (
+    hasTransfer &&
+    tokenBalanceDelta(expected.merchant, "in") &&
+    tokenBalanceDelta(expected.buyer, "out")
+  );
+}
+
 export async function verifyUsdcPayment(signature: string, expected: { buyerWallet: string; amountUsdc: number }): Promise<PaymentVerification> {
   const { mint, merchant } = requireConfig();
   const connection = new Connection(rpcUrl, "confirmed");
@@ -82,97 +201,14 @@ const merchantTokenAccount = (
   await getAssociatedTokenAddress(mint, merchant)
 ).toBase58();
 
-const tokenBalanceDelta = (
-  owner: string,
-  direction: "in" | "out"
-) => {
-  const before = transaction.meta?.preTokenBalances?.find(
-    (balance) =>
-      balance.owner === owner &&
-      balance.mint === mint.toBase58()
-  );
-
-  const after = transaction.meta?.postTokenBalances?.find(
-    (balance) =>
-      balance.owner === owner &&
-      balance.mint === mint.toBase58()
-  );
-
-  const beforeAmount = Number(
-    before?.uiTokenAmount.amount || 0
-  );
-
-  const afterAmount = Number(
-    after?.uiTokenAmount.amount || 0
-  );
-
-  const delta = afterAmount - beforeAmount;
-
-  return direction === "in"
-    ? delta === expectedAmount
-    : delta === -expectedAmount;
-};
-
-const hasTransfer =
-  transaction.transaction.message.instructions.some(
-    (instruction) => {
-      if (
-        !("parsed" in instruction) ||
-        instruction.program !== "spl-token"
-      ) {
-        return false;
-      }
-
-      const parsed = instruction.parsed as {
-        type?: string;
-        info?: {
-          authority?: string;
-          source?: string;
-          destination?: string;
-          amount?: string;
-          mint?: string;
-          tokenAmount?: {
-            amount?: string;
-            mint?: string;
-          };
-        };
-      };
-
-      if (
-        parsed.type !== "transfer" &&
-        parsed.type !== "transferChecked"
-      ) {
-        return false;
-      }
-
-      const info = parsed.info;
-
-      if (!info) return false;
-
-      const transferredAmount =
-        parsed.type === "transferChecked"
-          ? info.tokenAmount?.amount
-          : info.amount;
-
-      const transferredMint =
-        parsed.type === "transferChecked"
-          ? info.tokenAmount?.mint
-          : info.mint;
-
-      return (
-        transferredAmount === String(expectedAmount) &&
-        info.authority === buyer &&
-        info.source === buyerTokenAccount &&
-        info.destination === merchantTokenAccount &&
-        (!transferredMint ||
-          transferredMint === mint.toBase58())
-      );
-    }
-  );
-
-return hasTransfer &&
-  tokenBalanceDelta(merchant.toBase58(), "in") &&
-  tokenBalanceDelta(buyer, "out")
+return validateUsdcPaymentTransaction(transaction, {
+  amountBaseUnits: expectedAmount,
+  buyer,
+  buyerTokenAccount,
+  merchant: merchant.toBase58(),
+  merchantTokenAccount,
+  mint: mint.toBase58(),
+})
   ? "valid"
   : "invalid";
 }

@@ -377,8 +377,8 @@ export const store = {
       return undefined;
     }
 
-    // Product có variants thì bắt buộc
-    // order phải chọn một variant hợp lệ.
+    // Products with variants require a valid selection so reservations can be
+    // released back to the same inventory bucket later.
     if (
       product.variants.length > 0 &&
       !input.variant
@@ -425,6 +425,8 @@ export const store = {
             : variant,
       );
 
+    // Reserve stock before transaction construction. If construction or
+    // verification fails, markFailed releases this exact reservation.
     products.set(
       product.id,
       refreshStatus({
@@ -539,6 +541,8 @@ export const store = {
       return undefined;
     }
 
+    // Payment verification already succeeded. Clearing the reservation flag
+    // finalizes the stock consumption without adding inventory back.
     const updated = {
       ...order,
 
@@ -576,6 +580,8 @@ export const store = {
       return order;
     }
 
+    // releaseInventory is guarded by inventoryReserved, so retrying a failure
+    // cannot return the same stock twice.
     store.releaseInventory(
       order,
     );

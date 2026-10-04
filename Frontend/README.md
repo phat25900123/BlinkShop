@@ -4,6 +4,14 @@ BlinkShop is a social-commerce checkout infrastructure MVP on Solana Devnet. It 
 
 The included merchant demo workspace is **Aria Studio**.
 
+- **Live demo:** https://blinkshop.up.railway.app
+- **Example Blink:** https://blinkshop.up.railway.app/blink/blk-001
+- **Network:** Solana Devnet
+- **Payment:** SPL USDC
+- **Wallet:** Phantom
+
+The app is publicly deployed as a single Railway instance. Its JSON store is persisted on a Railway Volume at `/data`. This is suitable for the hackathon demo, but it is not multi-instance-safe or production-ready.
+
 ## Problem
 
 Social product discovery and checkout usually happen in separate places. Buyers leave the content, find the product again, and repeat checkout steps; merchants then have to reconcile payment and inventory across systems.
@@ -88,7 +96,7 @@ Production Action responses omit development-only blockhash, merchant-wallet, mi
 
 ## Security checks
 
-The MVP has passed the following checks:
+The deterministic automated suite covers:
 
 - variant overselling;
 - sold-out variant purchases;
@@ -97,6 +105,17 @@ The MVP has passed the following checks:
 - wrong buyer wallets.
 
 Order-to-transaction memo binding (test 4F) is intentionally deferred. A future version should add the order ID with a Solana Memo instruction and verify that memo during confirmation.
+
+## Technical proof
+
+- Real SPL USDC transfer flow on Solana Devnet through Phantom.
+- Backend verification of transaction success, mint, buyer, token accounts, merchant recipient, exact amount, and balance deltas.
+- Server-controlled `pending` to `paid` transition only after verification.
+- Total and selected-variant inventory reservation and final update.
+- Immutable `txSignature` storage with duplicate-use protection.
+- JSON persistence on a Railway persistent Volume at `/data` for the single deployed instance.
+- GitHub CI for install, typecheck, automated tests, lint, and production build.
+- 23 deterministic automated tests across inventory, order lifecycle, signature protection, and payment validation.
 
 ## Tech stack
 
@@ -152,6 +171,7 @@ Open `http://localhost:3000`. Useful checks:
 
 ```bash
 npx tsc --noEmit
+npm test
 npm run lint
 npm run build
 ```
@@ -252,14 +272,14 @@ admin secret is exposed to the browser in this version.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs `npm ci`, TypeScript, ESLint, and the production
-build on pushes to `main` and on pull requests using Node.js 22.
+`.github/workflows/ci.yml` runs `npm ci`, TypeScript, Vitest, ESLint, and the
+production build on pushes to `main` and on pull requests using Node.js 22.
 
 ## Known limitations
 
 - Solana Devnet only.
 - Phantom browser wallet dependency.
-- JSON persistence is local-development only.
+- JSON persistence is limited to the single-instance Railway demo and local development; it is not multi-instance-safe.
 - Supabase schema and persistence primitives are staged but not transactionally activated.
 - Order ID memo binding/test 4F is deferred.
 - No gasless transactions.
