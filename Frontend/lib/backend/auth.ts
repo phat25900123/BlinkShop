@@ -24,7 +24,7 @@ function bearerToken(request: Request) {
   return match?.[1];
 }
 
-export async function requireAuthenticatedUser(
+export async function requirePrivyUser(
   request: Request,
 ): Promise<AuthResult> {
   const accessToken = bearerToken(request);
@@ -44,7 +44,7 @@ export async function requireAuthenticatedUser(
       return {
         ok: false,
         response: errorResponse(
-          "Merchant authentication is not configured",
+          "Privy authentication is not configured",
           503,
         ),
       };
@@ -57,8 +57,10 @@ export async function requireAuthenticatedUser(
   }
 }
 
+export const requireAuthenticatedUser = requirePrivyUser;
+
 export async function requireMerchant(request: Request): Promise<AuthResult> {
-  const authentication = await requireAuthenticatedUser(request);
+  const authentication = await requirePrivyUser(request);
 
   if (!authentication.ok) {
     return authentication;

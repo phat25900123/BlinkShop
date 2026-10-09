@@ -10,6 +10,10 @@ import {
   PrivyProvider as PrivyReactProvider,
   usePrivy,
 } from "@privy-io/react-auth";
+import {
+  createSolanaRpc,
+  createSolanaRpcSubscriptions,
+} from "@solana/kit";
 
 type BlinkShopAuth = {
   configured: boolean;
@@ -48,13 +52,19 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
   } = usePrivy();
 
   const value = useMemo<BlinkShopAuth>(() => {
-    const embeddedSolanaWallet = user?.linkedAccounts.find(
-      (account) =>
-        account.type === "wallet" &&
-        account.chainType === "solana" &&
-        (account.walletClientType === "privy" ||
-          account.walletClientType === "privy-v2"),
-    );
+    const embeddedSolanaWallet = user?.linkedAccounts
+      .filter(
+        (account) =>
+          account.type === "wallet" &&
+          account.chainType === "solana" &&
+          (account.walletClientType === "privy" ||
+            account.walletClientType === "privy-v2"),
+      )
+      .sort(
+        (left, right) =>
+          ("walletIndex" in left ? left.walletIndex ?? 0 : 0) -
+          ("walletIndex" in right ? right.walletIndex ?? 0 : 0),
+      )[0];
 
     return {
       configured: true,
@@ -95,6 +105,16 @@ export function BlinkShopPrivyProvider({ children }: { children: ReactNode }) {
       appId={appId}
       config={{
         loginMethods: ["email"],
+        solana: {
+          rpcs: {
+            "solana:devnet": {
+              rpc: createSolanaRpc("https://api.devnet.solana.com"),
+              rpcSubscriptions: createSolanaRpcSubscriptions(
+                "wss://api.devnet.solana.com",
+              ),
+            },
+          },
+        },
         embeddedWallets: {
           solana: {
             createOnLogin: "all-users",
@@ -104,7 +124,7 @@ export function BlinkShopPrivyProvider({ children }: { children: ReactNode }) {
           theme: "light",
           accentColor: "#20211f",
           landingHeader: "Sign in to BlinkShop",
-          loginMessage: "Access the Aria Studio merchant workspace.",
+          loginMessage: "Continue checkout or access the Aria Studio workspace.",
         },
       }}
     >

@@ -1,6 +1,6 @@
 # BlinkShop
 
-BlinkShop is a social-commerce checkout infrastructure MVP on Solana Devnet. It turns a shareable product link (a Blink) into a Phantom-signed USDC payment, verifies that payment on the backend, and updates the order and inventory state.
+BlinkShop is a social-commerce checkout infrastructure MVP on Solana Devnet. It turns a shareable product link into a Privy embedded-wallet or Phantom-signed USDC payment, verifies that payment on the backend, and updates the order and inventory state.
 
 The included merchant demo workspace is **Aria Studio**.
 
@@ -9,7 +9,7 @@ The included merchant demo workspace is **Aria Studio**.
 - **Network:** Solana Devnet
 - **Payment:** SPL USDC
 - **Authentication:** Privy email OTP
-- **Wallets:** Privy embedded Solana wallet for authenticated users; Phantom for checkout
+- **Wallets:** Privy embedded Solana wallet for primary web checkout; Phantom for the fallback and Solana Actions
 
 The app is publicly deployed as a single Railway instance. Its JSON store is persisted on a Railway Volume at `/data`. This is suitable for the hackathon demo, but it is not multi-instance-safe or production-ready.
 
@@ -19,7 +19,7 @@ Social product discovery and checkout usually happen in separate places. Buyers 
 
 ## Solution
 
-BlinkShop gives each product a shareable checkout URL. The backend owns the product price, merchant destination, inventory reservation, and payment verification. The buyer only chooses an available variant and quantity, connects Phantom, and approves a Devnet USDC transfer.
+BlinkShop gives each product a shareable checkout URL. The backend owns the product price, merchant destination, buyer-wallet binding, inventory reservation, and payment verification. A web buyer signs in with email and approves the exact Devnet USDC transfer with a Privy embedded wallet. Phantom remains available as a separate fallback.
 
 ## Why Solana Actions and Blinks?
 
@@ -38,20 +38,28 @@ Merchant dashboard (Next.js client)
         │          │
         │          └── Store + JSON persistence (local MVP)
         │
-Buyer Blink ──> Solana Action route ──> unsigned USDC transaction
-        │                                  │
-        └── Phantom signs and sends ───────┘
+Buyer Blink ──> Privy access token ──> verified DID + embedded wallet
+        │                                      │
+        └── server-built USDC transfer <───────┘
+                           │
+                   Privy signs only
+                           │
+        BlinkShop validates every transaction field
+                           │
+       Devnet sponsor signs fee payer + backend broadcasts
                            │
                     Solana Devnet
                            │
-                 Backend verification
+           Independent backend payment verification
                            │
                 Paid order + final stock
+
+Solana Action / Phantom ──> existing unsigned transaction path ──┘
 ```
 
 - UI and backend: Next.js 16 App Router with TypeScript.
 - Authentication: Privy with server-verified access tokens.
-- Wallets: Privy embedded Solana wallet for authenticated users; Phantom remains the Phase 1 checkout signer.
+- Wallets: Privy embedded Solana wallet for the primary browser checkout; Phantom remains the external-wallet and Solana Action path.
 - Payment: SPL USDC on Solana Devnet.
 - Local persistence: `data/store.json` through a small persistence adapter.
 - Production persistence groundwork: Supabase schema and server-only REST adapter are included, but transactional store activation remains a deployment TODO.
@@ -60,10 +68,15 @@ Buyer Blink ──> Solana Action route ──> unsigned USDC transaction
 
 1. Open `/blink/:productId`.
 2. Select an in-stock variant and quantity.
-3. Connect Phantom on Solana Devnet.
-4. Sign and send the USDC transaction.
-5. Wait for backend verification.
-6. Review the confirmed order and optional Solana Explorer link.
+3. Sign in with the configured Privy email method.
+4. Wait for the embedded Solana wallet, then approve the exact USDC transfer.
+5. BlinkShop validates the buyer-signed transaction, adds its dedicated Devnet fee-payer signature, and broadcasts it.
+6. Wait for independent backend verification.
+7. Review the confirmed order and Solana Explorer link.
+
+The embedded wallet must already have a Devnet USDC associated token account
+and enough Devnet USDC for the purchase. BlinkShop never sponsors ATA creation.
+Use **Use Phantom instead** to exercise the original checkout path.
 
 ## Merchant flow
 
@@ -74,8 +87,9 @@ Buyer Blink ──> Solana Action route ──> unsigned USDC transaction
 5. Open a paid transaction on Solana Explorer Devnet.
 
 Privy creates a Solana embedded wallet during login and BlinkShop displays its
-address. Phase 1 does not use that wallet for checkout: public buyers continue
-to sign the existing USDC transfer with Phantom.
+address. The buyer endpoint verifies the access token, loads that DID from
+Privy server-side, selects its first embedded Solana wallet, and uses that
+address for the order. A wallet address supplied by the browser is rejected.
 
 ## Payment verification
 
@@ -104,6 +118,7 @@ Production Action responses omit development-only blockhash, merchant-wallet, mi
 - A pending or invalid submitted signature stays unbound; the order remains pending and reserved until valid confirmation or normal expiry.
 - A server-side transaction-construction failure becomes `failed` and releases inventory.
 - Paid orders retain `expiresAt` as the original reservation deadline/audit field; it no longer controls the paid state.
+- A buyer wallet may have only one pending reservation per product until that order is paid, failed, or expires.
 
 ## Security checks
 
@@ -115,14 +130,18 @@ The deterministic automated suite covers:
 - variant overselling;
 - sold-out variant purchases;
 - duplicate transaction signatures;
-- wrong payment amounts; and
-- wrong buyer wallets.
+- wrong payment amounts;
+- wrong buyer wallets;
+- authenticated buyer wallet binding and merchant-DID independence;
+- missing buyer and merchant USDC token accounts; and
+- sponsored instruction shape, including absence of ATA creation and `CloseAccount`.
+- server-side fee-payer validation, buyer-signature verification, tamper rejection, fee caps, and broadcast safety.
 
 Order-to-transaction memo binding (test 4F) is intentionally deferred. A future version should add the order ID with a Solana Memo instruction and verify that memo during confirmation.
 
 ## Technical proof
 
-- Real SPL USDC transfer flow on Solana Devnet through Phantom.
+- SPL USDC transfer flows through Privy embedded wallets and the existing Phantom path.
 - Backend verification of transaction success, mint, buyer, token accounts, merchant recipient, exact amount, and balance deltas.
 - Server-controlled `pending` to `paid` transition only after verification.
 - Privy access-token verification and merchant DID authorization on dashboard APIs.
@@ -131,7 +150,7 @@ Order-to-transaction memo binding (test 4F) is intentionally deferred. A future 
 - Immutable `txSignature` storage with duplicate-use protection.
 - JSON persistence on a Railway persistent Volume at `/data` for the single deployed instance.
 - GitHub CI for install, typecheck, automated tests, lint, and production build.
-- 49 deterministic automated tests across merchant authorization, inventory, order lifecycle, confirmation-state integrity, signature protection, and payment validation.
+- 101 deterministic automated tests across buyer/merchant authorization, sponsored transaction construction and submission, inventory, order lifecycle, confirmation-state integrity, signature protection, and payment validation.
 
 ## Tech stack
 
@@ -153,9 +172,10 @@ Requirements:
 
 - Node.js version supported by Next.js 16
 - npm
-- Phantom configured for Solana Devnet
-- A Privy app with email login and Solana embedded wallets enabled
-- Devnet SOL for transaction fees
+- Phantom configured for Solana Devnet when testing the fallback
+- A Privy app with email login and Solana embedded wallets; TEE may remain enabled, but Privy fee sponsorship is not used
+- A dedicated Devnet-only BlinkShop sponsor wallet with a small Devnet SOL balance
+- Devnet SOL for Phantom fallback transaction fees
 - Devnet USDC for the buyer wallet
 
 Install dependencies:
@@ -171,13 +191,15 @@ Copy `.env.example` to `.env.local` and fill in the values. Do not commit `.env.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `NEXT_PUBLIC_APP_URL` | Yes | Public app origin. Use the production HTTPS origin after deployment. |
-| `NEXT_PUBLIC_PRIVY_APP_ID` | Merchant dashboard | Public Privy application ID used by `PrivyProvider`. |
-| `PRIVY_APP_SECRET` | Merchant dashboard | Server-only Privy application secret used to verify access tokens. Never prefix with `NEXT_PUBLIC_`. |
+| `NEXT_PUBLIC_PRIVY_APP_ID` | Privy checkout/dashboard | Public Privy application ID used by `PrivyProvider`. |
+| `PRIVY_APP_SECRET` | Privy checkout/dashboard | Server-only Privy application secret used to verify access tokens and load the authenticated user. Never prefix with `NEXT_PUBLIC_`. |
 | `PRIVY_MERCHANT_USER_ID` | Merchant dashboard | Server-only Privy user DID authorized for the Aria Studio workspace. |
+| `SOLANA_CLUSTER` | Yes | Must be exactly `devnet`; BlinkShop refuses server sponsorship on any other value. |
 | `SOLANA_RPC_URL` | Yes | Solana Devnet RPC endpoint. |
 | `SOLANA_USDC_MINT` | Yes | Devnet USDC SPL mint. |
 | `MERCHANT_WALLET` | Yes | Public Solana address receiving USDC. Never use a private key. |
 | `MERCHANT_ID` | Recommended | Merchant workspace identifier; defaults to Aria Studio's demo ID. |
+| `SOLANA_SPONSOR_SECRET_KEY_BASE64` | Sponsored checkout | Server-only base64 encoding of a dedicated Devnet keypair's 64-byte secret key. Never expose with `NEXT_PUBLIC_`, log, or commit it. |
 | `DATA_STORE` | Local only | Must currently be `json`; other values fail clearly instead of silently selecting an inactive adapter. |
 | `DATA_DIR` | Optional | Directory containing `store.json`. Set to `/data` when using a Railway persistent volume; otherwise defaults to `<project>/data`. |
 | `SUPABASE_URL` | Migration | Server-only Supabase project URL for the staged adapter. |
@@ -203,6 +225,8 @@ Main routes:
 - Public: `GET /api/products`, `GET /api/products/:id`
 - Merchant only: `POST /api/products`, `PATCH/DELETE /api/products/:id`
 - Merchant only: `GET/POST /api/orders`, `GET /api/orders/:id`
+- Authenticated Privy buyer: `POST /api/checkout/privy/:productId`
+- Authenticated Privy buyer: `POST /api/checkout/privy/:productId/submit`
 - `POST /api/orders/confirm`
 - `GET/POST /api/actions/product/:id`
 - `GET /actions.json`
@@ -215,13 +239,13 @@ one sold-out size, and no historical orders. The first live payment therefore
 appears as a clean new Paid order during the demo.
 
 1. Start on the dashboard and show a product priced between 0.1 and 0.5 Devnet USDC.
-2. Choose **Open Blink**.
-3. Connect Phantom on Devnet.
-4. Select an available variant and quantity.
-5. Choose **Sign & pay**, then approve in Phantom.
+2. Choose **Open Blink** and select an available variant and quantity.
+3. Sign in with a non-merchant email and wait for the embedded Solana wallet.
+4. Fund that wallet's existing ATA with Devnet USDC, but leave the wallet with 0 SOL.
+5. Choose **Pay**; Privy signs without broadcasting, then BlinkShop validates, adds the Devnet fee-payer signature, broadcasts, and independently verifies the payment.
 6. Show the payment receipt and Explorer link.
-7. Return to **Orders** and confirm the order is Paid.
-8. Return to the product and show that total and variant stock decreased.
+7. Return to **Orders** and confirm the order is Paid and stock decreased.
+8. Separately choose **Use Phantom instead** to verify the fallback remains available.
 
 Use Devnet assets only; they have no real-world value.
 
@@ -244,10 +268,12 @@ but the JSON store remains a single-workspace demo design.
    ```env
    DATA_STORE=json
    DATA_DIR=/data
+   SOLANA_CLUSTER=devnet
    SOLANA_RPC_URL=<your-devnet-rpc-url>
    SOLANA_USDC_MINT=<your-devnet-usdc-mint>
    MERCHANT_WALLET=<your-public-merchant-wallet>
    MERCHANT_ID=merchant-aria-studio
+   SOLANA_SPONSOR_SECRET_KEY_BASE64=<server-only-base64-secret>
    NEXT_PUBLIC_PRIVY_APP_ID=<your-privy-app-id>
    PRIVY_APP_SECRET=<your-server-only-privy-app-secret>
    PRIVY_MERCHANT_USER_ID=<did:privy:authorized-merchant-user>
@@ -259,7 +285,7 @@ but the JSON store remains a single-workspace demo design.
 9. Redeploy after setting the final URL so Actions, callbacks, and Blink links
    all use the public HTTPS origin.
 10. Verify `/actions.json`, `/api/actions/product/:id`, and `/blink/:id` on the
-    deployed domain before running the Phantom Devnet demo.
+    deployed domain before running the Privy and Phantom Devnet demos.
 
 Keep the service at one replica while using this JSON adapter. The mounted
 volume makes restarts durable, but JSON file writes are not a distributed
@@ -302,19 +328,63 @@ production build on pushes to `main` and on pull requests using Node.js 22.
 ## Known limitations
 
 - Solana Devnet only.
-- Phantom browser wallet dependency for the current buyer payment flow.
+- BlinkShop server sponsorship has not yet passed the live 0-SOL Devnet checkpoint; do not describe it as gasless until that succeeds.
+- Buyer and merchant Devnet USDC ATAs must be created and funded outside BlinkShop before checkout.
 - JSON persistence is limited to the single-instance Railway demo and local development; it is not multi-instance-safe.
 - Supabase schema and persistence primitives are staged but not transactionally activated.
 - Order ID memo binding/test 4F is deferred.
-- No sponsored or gasless transactions; buyers still need Devnet SOL for Phantom checkout fees.
+- Phantom fallback buyers still need Devnet SOL for their transaction fee.
+- The hackathon safeguard limits pending orders per wallet/product and rejects fees above 20,000 lamports; production sponsorship also needs persistent rate limits, balance monitoring, alerts, managed key custody, caps, and circuit breakers.
 - No affiliate system.
 - Single configured Privy merchant DID; no multi-merchant workspace isolation.
+
+## BlinkShop Devnet sponsor wallet
+
+This implementation is for the Solana Devnet hackathon demo only. It does not
+use Privy native fee sponsorship, the **Sponsor gas fees** toggle, client-side
+sponsorship, prepaid sponsorship credits, or a Privy fee-payer wallet. TEE may
+remain enabled for embedded-wallet signing; do not undo an existing migration.
+
+Create a completely new keypair dedicated only to BlinkShop Devnet fees. Never
+reuse the merchant wallet, a personal wallet, a Mainnet wallet, or a production
+key. Keep only a small amount of free Devnet SOL in it. The secret belongs only
+in local `.env.local` and the Railway server environment; never commit its JSON
+file, send it through chat, expose it with `NEXT_PUBLIC_`, or log it.
+
+```powershell
+# Generate a dedicated keypair locally. Keep this file outside the repository.
+$sponsorFile = Join-Path $HOME ".config/solana/blinkshop-devnet-sponsor.json"
+solana-keygen new --outfile $sponsorFile
+
+# Show only the public address.
+$sponsorAddress = solana-keygen pubkey $sponsorFile
+$sponsorAddress
+
+# Encode the 64-byte secret locally without printing it, then paste it only
+# into SOLANA_SPONSOR_SECRET_KEY_BASE64 in .env.local.
+$secretBytes = [byte[]](Get-Content -Raw $sponsorFile | ConvertFrom-Json)
+$secretBase64 = [Convert]::ToBase64String($secretBytes)
+$secretBase64 | Set-Clipboard
+
+# Obtain free Devnet SOL and verify the public balance.
+solana airdrop 1 $sponsorAddress --url devnet
+solana balance $sponsorAddress --url devnet
+Remove-Variable secretBytes, secretBase64
+```
+
+Set `SOLANA_CLUSTER=devnet`, restart Next.js, and later add the same secret only
+through Railway's server environment-variable UI. Pre-create both buyer and
+merchant Devnet USDC ATAs. The server derives the sponsor public key from the
+secret, verifies the buyer signature and exact `TransferChecked`, caps the
+network fee, adds the fee-payer signature, and broadcasts with preflight.
+
+BlinkShop server-side sponsored checkout implemented, but live 0-SOL Devnet E2E not yet verified.
 
 ## Future roadmap
 
 - Transactional Supabase repository with row locking/RPC-based reservations.
 - Solana Memo order binding and confirmation checks.
-- Privy embedded-wallet checkout and gas sponsorship where the security model permits it.
+- Managed sponsor custody plus persistent sponsorship metering, alerts, and circuit breakers.
 - Affiliate attribution.
 - Multi-merchant workspace isolation.
 - Additional wallet providers and richer operational analytics.

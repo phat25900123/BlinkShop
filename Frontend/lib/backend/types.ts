@@ -30,6 +30,7 @@ export type Order = {
   variant?: string;
   quantity: number;
   amountUsdc: number;
+  sponsoredTransactionHash?: string;
   txSignature?: string;
   status: OrderStatus;
   inventoryReserved: boolean;

@@ -339,6 +339,27 @@ export const store = {
     return orders.get(id);
   },
 
+  bindSponsoredTransaction(id: string, messageHash: string) {
+    const order = store.getOrder(id);
+    if (!order || order.status !== "pending") return undefined;
+
+    if (
+      order.sponsoredTransactionHash &&
+      order.sponsoredTransactionHash !== messageHash
+    ) {
+      return undefined;
+    }
+
+    const updated = {
+      ...order,
+      sponsoredTransactionHash: messageHash,
+      updatedAt: new Date().toISOString(),
+    };
+    orders.set(id, updated);
+    persistState();
+    return updated;
+  },
+
   findOrderBySignature(
     signature: string,
   ) {
@@ -362,6 +383,7 @@ export const store = {
       | "status"
       | "expiresAt"
       | "inventoryReserved"
+      | "sponsoredTransactionHash"
     >,
   ) {
     const product =

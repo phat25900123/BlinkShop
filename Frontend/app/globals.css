@@ -205,6 +205,12 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .payment-message { padding: 0 8px; font-size: 10px; }
 .secure-note { line-height: 1.55; }
 .secure-note .mono { font-size: 8px; }
+.sponsorship-note { margin: 10px 0 0; color: #58703c; font-size: 10px; text-align: center; }
+.buyer-wallet-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; margin-top: 10px; color: #777970; font-size: 9px; }
+.buyer-wallet-row .mono { min-width: 0; overflow: hidden; text-align: right; text-overflow: ellipsis; }
+.buyer-wallet-row button, .phantom-fallback-button { border: 0; background: transparent; color: #596842; cursor: pointer; font: inherit; font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
+.buyer-wallet-row button:disabled, .phantom-fallback-button:disabled { cursor: not-allowed; opacity: .55; }
+.phantom-fallback-button { display: block; margin: 12px auto 0; padding: 4px 8px; }
 
 .payment-complete { display: flex; flex-direction: column; align-items: stretch; margin-top: 4px; padding: 22px; border: 1px solid #d8e5c4; border-radius: 10px; background: #f7fbed; }
 .payment-complete .success-mark { display: grid; place-items: center; width: 38px; height: 38px; margin-bottom: 18px; border-radius: 50%; background: #789952; color: white; font-size: 20px; }

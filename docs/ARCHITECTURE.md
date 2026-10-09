@@ -5,11 +5,15 @@ BlinkShop is a Next.js application that combines a merchant workspace, buyer-fac
 ```text
 Buyer / Blink UI
        ↓
-Actions API creates transaction from server-owned order data
+Privy authentication binds the buyer's embedded Solana wallet
        ↓
-Phantom signs and broadcasts transaction
+Backend reserves inventory and creates one exact USDC TransferChecked
        ↓
-Solana records SPL USDC transfer
+Privy wallet signs only; the browser does not broadcast
+       ↓
+Backend validates the order, transaction, and buyer signature
+       ↓
+Dedicated BlinkShop Devnet fee payer signs and backend broadcasts
        ↓
 Backend fetches and verifies transaction
        ↓
@@ -20,6 +24,12 @@ Order = Paid
 Reserved inventory becomes final
        ↓
 Persistent JSON store
+
+Phantom / Solana Action fallback
+       ↓
+Existing Action transaction + external-wallet broadcast
+       ↓
+Same independent backend payment verification
 ```
 
 ## Components
@@ -27,6 +37,8 @@ Persistent JSON store
 - `Frontend/app/`: merchant dashboard, Blink checkout, and Next.js API routes.
 - `Frontend/lib/backend/store.ts`: product, order, reservation, expiry, and signature state transitions.
 - `Frontend/lib/backend/solana.ts`: unsigned SPL USDC transaction construction and on-chain verification.
+- `Frontend/lib/backend/sponsored-checkout.ts`: narrow Privy checkout transaction containing one `TransferChecked` with the BlinkShop sponsor as fee payer.
+- `Frontend/lib/backend/sponsored-submit.ts`: buyer-signature, instruction, account, amount, fee, sponsor-signing, and Devnet broadcast boundary.
 - `Frontend/lib/backend/store-persistence.ts`: JSON persistence. Railway mounts its persistent volume at `/data` through `DATA_DIR=/data`.
 - `Frontend/app/api/actions/product/[id]/`: Solana Action metadata, transaction creation, and confirmation.
 
@@ -45,8 +57,11 @@ The system does **not** trust:
 - Frontend-reported amount or merchant destination.
 - Arbitrary client order state.
 - A transaction signature merely because the browser submitted it.
+- A buyer-signed transaction until every instruction and signer is revalidated before the server sponsor signs it.
 
 The client chooses a product variant and quantity and requests a transaction. The server creates the pending order, reserves inventory, calculates the amount, selects the configured merchant, and builds the transaction. Confirmation is a separate server-side verification step.
+
+The dedicated sponsor key is server-only and Devnet-only. Privy signs the buyer authority but does not sponsor or broadcast. The server refuses extra instructions, ATA creation, account closure, arbitrary programs, mismatched accounts or amounts, invalid buyer signatures, expired blockhashes, and unexpectedly high fees before applying its fee-payer signature.
 
 ## On-chain and off-chain state
 
