@@ -58,6 +58,32 @@
       "variants": [],
       "createdAt": "2026-09-27T00:00:00.000Z",
       "updatedAt": "2026-09-27T00:00:00.000Z"
+    },
+    {
+      "merchantId": "merchant-aria-studio",
+      "name": "Anhedonia Tour Tee (Black)",
+      "description": "",
+      "priceUsdc": 0.03,
+      "imageUrl": "https://thatsuburbanstore.com/cdn/shop/files/SubUrbanT-ShirtCompilation-3.png?v=1771885503&width=990",
+      "inventory": 21,
+      "variants": [
+        {
+          "id": "e16de7ad-799e-40c9-bf02-42ad75cfeeb8",
+          "name": "Size",
+          "value": "S",
+          "inventory": 8
+        },
+        {
+          "id": "850319ba-0244-45dd-aedb-e971acffed96",
+          "name": "Size",
+          "value": "L",
+          "inventory": 13
+        }
+      ],
+      "id": "blk-ed65e014",
+      "status": "active",
+      "createdAt": "2026-10-09T06:36:33.431Z",
+      "updatedAt": "2026-10-09T06:36:33.431Z"
     }
   ],
   "orders": []

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireMerchant } from "@/lib/backend/auth";
 import {
   areVariantsValid,
   normalizeVariants,
@@ -52,6 +53,9 @@ export async function PATCH(
   request: NextRequest,
   context: Context,
 ) {
+  const authentication = await requireMerchant(request);
+  if (!authentication.ok) return authentication.response;
+
   const { id } = await context.params;
 
   const currentProduct = store.getProduct(id);
@@ -241,9 +245,12 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   context: Context,
 ) {
+  const authentication = await requireMerchant(request);
+  if (!authentication.ok) return authentication.response;
+
   const { id } = await context.params;
 
   const result = store.deleteProduct(id);

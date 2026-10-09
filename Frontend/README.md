@@ -8,7 +8,8 @@ The included merchant demo workspace is **Aria Studio**.
 - **Example Blink:** https://blinkshop.up.railway.app/blink/blk-001
 - **Network:** Solana Devnet
 - **Payment:** SPL USDC
-- **Wallet:** Phantom
+- **Authentication:** Privy email OTP
+- **Wallets:** Privy embedded Solana wallet for authenticated users; Phantom for checkout
 
 The app is publicly deployed as a single Railway instance. Its JSON store is persisted on a Railway Volume at `/data`. This is suitable for the hackathon demo, but it is not multi-instance-safe or production-ready.
 
@@ -29,7 +30,11 @@ Solana Actions provide a standard transaction response that compatible clients c
 ```text
 Merchant dashboard (Next.js client)
         │
-        ├── Products / orders API routes
+        ├── Privy login + embedded Solana wallet
+        │          │
+        │          └── Verified access token + merchant DID authorization
+        │
+        ├── Protected products / orders API routes
         │          │
         │          └── Store + JSON persistence (local MVP)
         │
@@ -45,7 +50,8 @@ Buyer Blink ──> Solana Action route ──> unsigned USDC transaction
 ```
 
 - UI and backend: Next.js 16 App Router with TypeScript.
-- Wallet: Phantom browser provider.
+- Authentication: Privy with server-verified access tokens.
+- Wallets: Privy embedded Solana wallet for authenticated users; Phantom remains the Phase 1 checkout signer.
 - Payment: SPL USDC on Solana Devnet.
 - Local persistence: `data/store.json` through a small persistence adapter.
 - Production persistence groundwork: Supabase schema and server-only REST adapter are included, but transactional store activation remains a deployment TODO.
@@ -61,11 +67,15 @@ Buyer Blink ──> Solana Action route ──> unsigned USDC transaction
 
 ## Merchant flow
 
-1. Create or edit a product in the dashboard.
-2. Set a small USDC price, image, inventory, and optional variants.
-3. Copy or open the generated Blink.
-4. Follow payment status in Orders.
+1. Sign in with Privy using an email one-time passcode.
+2. The configured merchant DID receives access to the Aria Studio dashboard.
+3. Create or edit a product and copy its generated Blink.
+4. Follow payment status in the protected Orders view.
 5. Open a paid transaction on Solana Explorer Devnet.
+
+Privy creates a Solana embedded wallet during login and BlinkShop displays its
+address. Phase 1 does not use that wallet for checkout: public buyers continue
+to sign the existing USDC transfer with Phantom.
 
 ## Payment verification
 
@@ -99,6 +109,9 @@ Production Action responses omit development-only blockhash, merchant-wallet, mi
 
 The deterministic automated suite covers:
 
+- missing, invalid, and unauthorized Privy access tokens;
+- protected merchant mutations and order reads;
+- public product discovery and buyer checkout routes;
 - variant overselling;
 - sold-out variant purchases;
 - duplicate transaction signatures;
@@ -112,11 +125,13 @@ Order-to-transaction memo binding (test 4F) is intentionally deferred. A future 
 - Real SPL USDC transfer flow on Solana Devnet through Phantom.
 - Backend verification of transaction success, mint, buyer, token accounts, merchant recipient, exact amount, and balance deltas.
 - Server-controlled `pending` to `paid` transition only after verification.
+- Privy access-token verification and merchant DID authorization on dashboard APIs.
+- Automatic Privy Solana embedded-wallet provisioning for authenticated users.
 - Total and selected-variant inventory reservation and final update.
 - Immutable `txSignature` storage with duplicate-use protection.
 - JSON persistence on a Railway persistent Volume at `/data` for the single deployed instance.
 - GitHub CI for install, typecheck, automated tests, lint, and production build.
-- 32 deterministic automated tests across inventory, order lifecycle, confirmation-state integrity, signature protection, and payment validation.
+- 49 deterministic automated tests across merchant authorization, inventory, order lifecycle, confirmation-state integrity, signature protection, and payment validation.
 
 ## Tech stack
 
@@ -125,6 +140,8 @@ Order-to-transaction memo binding (test 4F) is intentionally deferred. A future 
 - TypeScript
 - `@solana/web3.js`
 - `@solana/spl-token`
+- `@privy-io/react-auth`
+- `@privy-io/node`
 - Phantom
 - Solana Devnet / Devnet USDC
 - Local JSON persistence for development
@@ -137,6 +154,7 @@ Requirements:
 - Node.js version supported by Next.js 16
 - npm
 - Phantom configured for Solana Devnet
+- A Privy app with email login and Solana embedded wallets enabled
 - Devnet SOL for transaction fees
 - Devnet USDC for the buyer wallet
 
@@ -153,6 +171,9 @@ Copy `.env.example` to `.env.local` and fill in the values. Do not commit `.env.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `NEXT_PUBLIC_APP_URL` | Yes | Public app origin. Use the production HTTPS origin after deployment. |
+| `NEXT_PUBLIC_PRIVY_APP_ID` | Merchant dashboard | Public Privy application ID used by `PrivyProvider`. |
+| `PRIVY_APP_SECRET` | Merchant dashboard | Server-only Privy application secret used to verify access tokens. Never prefix with `NEXT_PUBLIC_`. |
+| `PRIVY_MERCHANT_USER_ID` | Merchant dashboard | Server-only Privy user DID authorized for the Aria Studio workspace. |
 | `SOLANA_RPC_URL` | Yes | Solana Devnet RPC endpoint. |
 | `SOLANA_USDC_MINT` | Yes | Devnet USDC SPL mint. |
 | `MERCHANT_WALLET` | Yes | Public Solana address receiving USDC. Never use a private key. |
@@ -179,10 +200,9 @@ npm run build
 
 Main routes:
 
-- `GET/POST /api/products`
-- `GET/PATCH/DELETE /api/products/:id`
-- `GET/POST /api/orders`
-- `GET /api/orders/:id`
+- Public: `GET /api/products`, `GET /api/products/:id`
+- Merchant only: `POST /api/products`, `PATCH/DELETE /api/products/:id`
+- Merchant only: `GET/POST /api/orders`, `GET /api/orders/:id`
 - `POST /api/orders/confirm`
 - `GET/POST /api/actions/product/:id`
 - `GET /actions.json`
@@ -211,7 +231,8 @@ Use Devnet assets only; they have no real-world value.
 
 Railway can run the JSON-backed hackathon demo as a single service with a
 persistent volume. This is suitable for controlled demo traffic, but it does
-not add cross-instance locking or merchant authentication.
+not add cross-instance locking. Merchant APIs require Privy authentication,
+but the JSON store remains a single-workspace demo design.
 
 1. Create a Railway service from this GitHub repository.
 2. Set **Root Directory** to `/Frontend`.
@@ -227,6 +248,9 @@ not add cross-instance locking or merchant authentication.
    SOLANA_USDC_MINT=<your-devnet-usdc-mint>
    MERCHANT_WALLET=<your-public-merchant-wallet>
    MERCHANT_ID=merchant-aria-studio
+   NEXT_PUBLIC_PRIVY_APP_ID=<your-privy-app-id>
+   PRIVY_APP_SECRET=<your-server-only-privy-app-secret>
+   PRIVY_MERCHANT_USER_ID=<did:privy:authorized-merchant-user>
    ```
 
 7. Deploy once, then generate a public HTTPS domain in Railway.
@@ -265,11 +289,10 @@ in-memory state. Action POST may reserve an order on one instance while confirm
 runs on another instance with different state. Do not treat the current JSON
 adapter as production persistence.
 
-The merchant mutation routes (`POST /api/products`, `PATCH/DELETE
-/api/products/:id`, and direct `POST /api/orders`) do not have authentication.
-This is acceptable only for the local hackathon MVP. A public payment deployment
-needs merchant authentication or a secure server-mediated admin session; no
-admin secret is exposed to the browser in this version.
+Merchant mutations and order reads require a Privy bearer token. The backend
+verifies the token with the Privy Node SDK and compares its user DID with
+`PRIVY_MERCHANT_USER_ID`; browser-supplied wallet addresses or emails never
+grant merchant access.
 
 ## Continuous integration
 
@@ -279,19 +302,19 @@ production build on pushes to `main` and on pull requests using Node.js 22.
 ## Known limitations
 
 - Solana Devnet only.
-- Phantom browser wallet dependency.
+- Phantom browser wallet dependency for the current buyer payment flow.
 - JSON persistence is limited to the single-instance Railway demo and local development; it is not multi-instance-safe.
 - Supabase schema and persistence primitives are staged but not transactionally activated.
 - Order ID memo binding/test 4F is deferred.
-- No gasless transactions.
+- No sponsored or gasless transactions; buyers still need Devnet SOL for Phantom checkout fees.
 - No affiliate system.
-- No authentication or multi-merchant isolation in this hackathon MVP.
+- Single configured Privy merchant DID; no multi-merchant workspace isolation.
 
 ## Future roadmap
 
 - Transactional Supabase repository with row locking/RPC-based reservations.
 - Solana Memo order binding and confirmation checks.
-- Gas sponsorship where the security model permits it.
+- Privy embedded-wallet checkout and gas sponsorship where the security model permits it.
 - Affiliate attribution.
-- Merchant authentication and workspace isolation.
+- Multi-merchant workspace isolation.
 - Additional wallet providers and richer operational analytics.

@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
+import { requireMerchant } from "@/lib/backend/auth";
 import { store } from "@/lib/backend/store";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authentication = await requireMerchant(request);
+  if (!authentication.ok) return authentication.response;
+
   return NextResponse.json({ orders: store.listOrders() });
 }
 
 export async function POST(request: NextRequest) {
+  const authentication = await requireMerchant(request);
+  if (!authentication.ok) return authentication.response;
+
   let body: Record<string, unknown>;
 
   try {

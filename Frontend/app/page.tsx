@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Transaction } from "@solana/web3.js";
 import { DashboardViews } from "./DashboardViews";
+import { useBlinkShopAuth } from "@/components/providers/PrivyProvider";
 import { getSolanaProvider, } from "@/lib/phantom";
 
 type Product = {
@@ -63,6 +64,16 @@ type DashboardOrder = {
   quantity: number;
   txSignature?: string;
 };
+
+class MerchantAuthorizationError extends Error {
+  constructor(
+    readonly status: 401 | 403,
+    message: string,
+  ) {
+    super(message);
+    this.name = "MerchantAuthorizationError";
+  }
+}
 
 type ProductFormVariant = {
   name: string;
@@ -300,12 +311,13 @@ function SettingsView() {
 
         <div className="settings-row">
           <div>
-            <strong>Wallet provider</strong>
-            <p>Phantom</p>
+            <strong>Authentication and wallets</strong>
+            <p>Privy authentication with an embedded Solana wallet.</p>
+            <small>Checkout continues to use Phantom during Phase 1.</small>
           </div>
 
           <span className="settings-badge">
-            Browser wallet
+            Phase 1
           </span>
         </div>
 
@@ -325,8 +337,64 @@ function SettingsView() {
   );
 }
 
+function MerchantAccessState({
+  eyebrow,
+  title,
+  message,
+  action,
+  secondaryAction,
+  walletAddress,
+}: {
+  eyebrow: string;
+  title: string;
+  message: string;
+  action?: { label: string; onClick: () => void };
+  secondaryAction?: { label: string; onClick: () => void };
+  walletAddress?: string | null;
+}) {
+  return (
+    <main className="auth-shell">
+      <section className="auth-panel">
+        <div className="brand auth-brand">
+          <span className="brand-mark">B</span>
+          <span className="brand-wordmark">
+            Blink<span className="brand-wordmark-accent">Shop</span>
+          </span>
+        </div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h1>{title}<span className="heading-period">.</span></h1>
+        <p>{message}</p>
+        {walletAddress && (
+          <div className="auth-wallet">
+            <span>Privy Solana wallet</span>
+            <strong className="mono" title={walletAddress}>
+              {shortValue(walletAddress)}
+            </strong>
+          </div>
+        )}
+        {(action || secondaryAction) && (
+          <div className="auth-actions">
+            {action && (
+              <button className="primary-button" type="button" onClick={action.onClick}>
+                {action.label}
+              </button>
+            )}
+            {secondaryAction && (
+              <button className="secondary-button" type="button" onClick={secondaryAction.onClick}>
+                {secondaryAction.label}
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
+
 export default function Home() {
-const [active, setActive] = useState("Overview");
+  const auth = useBlinkShopAuth();
+  const { getAccessToken } = auth;
+  const [active, setActive] = useState("Overview");
   const [language, setLanguage] = useState<InterfaceLanguage>("en");
   const [openTopMenu, setOpenTopMenu] = useState<"language" | "account" | null>(null);
   const topActionsRef = useRef<HTMLDivElement>(null);
@@ -336,6 +404,9 @@ const [active, setActive] = useState("Overview");
 
   const [loadError, setLoadError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [authorizationFailure, setAuthorizationFailure] = useState<
+    401 | 403 | null
+  >(null);
 
   const [showCreateProduct, setShowCreateProduct] = useState(false);
 
@@ -377,6 +448,24 @@ const [active, setActive] = useState("Overview");
   const [quantity, setQuantity] = useState(1);
   const [selectedVariant, setSelectedVariant] = useState("");
 
+  const authenticatedFetch = useCallback(
+    async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const accessToken = await getAccessToken();
+
+      if (!accessToken) {
+        throw new MerchantAuthorizationError(
+          401,
+          "Your BlinkShop session has expired",
+        );
+      }
+
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${accessToken}`);
+
+      return fetch(input, { ...init, headers });
+    },
+    [getAccessToken],
+  );
 
   /**
    * Load products + orders from backend.
@@ -389,10 +478,24 @@ const fetchDashboardData = useCallback(async () => {
     fetch("/api/products", {
       cache: "no-store",
     }),
-    fetch("/api/orders", {
+    authenticatedFetch("/api/orders", {
       cache: "no-store",
     }),
   ]);
+
+  if (ordersResponse.status === 401) {
+    throw new MerchantAuthorizationError(
+      401,
+      "Your BlinkShop session has expired",
+    );
+  }
+
+  if (ordersResponse.status === 403) {
+    throw new MerchantAuthorizationError(
+      403,
+      "This account is not authorized for the Aria Studio workspace",
+    );
+  }
 
   if (!productsResponse.ok || !ordersResponse.ok) {
     throw new Error("Unable to load dashboard data");
@@ -438,7 +541,7 @@ const fetchDashboardData = useCallback(async () => {
     products: loadedProducts,
     orders: loadedOrders,
   };
-}, []);
+}, [authenticatedFetch]);
 
 const loadDashboard = useCallback(async () => {
   try {
@@ -449,6 +552,10 @@ const loadDashboard = useCallback(async () => {
     setProducts(data.products);
     setOrders(data.orders);
   } catch (error) {
+    if (error instanceof MerchantAuthorizationError) {
+      setAuthorizationFailure(error.status);
+    }
+
     setLoadError(
       error instanceof Error
         ? error.message
@@ -461,6 +568,10 @@ const loadDashboard = useCallback(async () => {
 
 useEffect(() => {
   let cancelled = false;
+
+  if (!auth.configured || !auth.ready || !auth.authenticated) {
+    return;
+  }
 
   void fetchDashboardData()
     .then((data) => {
@@ -478,6 +589,10 @@ useEffect(() => {
         return;
       }
 
+      if (error instanceof MerchantAuthorizationError) {
+        setAuthorizationFailure(error.status);
+      }
+
       setLoadError(
         error instanceof Error
           ? error.message
@@ -489,7 +604,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [fetchDashboardData]);
+}, [auth.authenticated, auth.configured, auth.ready, fetchDashboardData]);
 
 useEffect(() => {
   const savedLanguage = window.localStorage.getItem("blinkshop-language");
@@ -550,6 +665,78 @@ useEffect(() => {
     return () => window.clearTimeout(timer);
   }
 }, []);
+
+  if (!auth.configured) {
+    return (
+      <MerchantAccessState
+        eyebrow="MERCHANT AUTHENTICATION"
+        title="Privy setup required"
+        message="Set NEXT_PUBLIC_PRIVY_APP_ID, PRIVY_APP_SECRET, and PRIVY_MERCHANT_USER_ID to enable the merchant dashboard. Public Blink checkout remains available."
+      />
+    );
+  }
+
+  if (!auth.ready) {
+    return (
+      <MerchantAccessState
+        eyebrow="MERCHANT AUTHENTICATION"
+        title="Preparing secure access"
+        message="Checking your Privy session."
+      />
+    );
+  }
+
+  if (!auth.authenticated) {
+    return (
+      <MerchantAccessState
+        eyebrow="ARIA STUDIO WORKSPACE"
+        title="Sign in to BlinkShop"
+        message="Authenticate with Privy to manage products and review customer orders."
+        action={{
+          label: "Sign in",
+          onClick: () => {
+            setAuthorizationFailure(null);
+            setIsLoading(true);
+            auth.login();
+          },
+        }}
+      />
+    );
+  }
+
+  if (authorizationFailure === 403) {
+    return (
+      <MerchantAccessState
+        eyebrow="ARIA STUDIO WORKSPACE"
+        title="Workspace access denied"
+        message="This Privy account is authenticated but is not authorized for this merchant workspace."
+        walletAddress={auth.embeddedSolanaWallet}
+        action={{ label: "Sign out", onClick: () => void auth.logout() }}
+      />
+    );
+  }
+
+  if (authorizationFailure === 401) {
+    return (
+      <MerchantAccessState
+        eyebrow="MERCHANT AUTHENTICATION"
+        title="Session expired"
+        message="Sign out, then sign in again to refresh your BlinkShop session."
+        action={{ label: "Sign out", onClick: () => void auth.logout() }}
+      />
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <MerchantAccessState
+        eyebrow="ARIA STUDIO WORKSPACE"
+        title="Verifying merchant access"
+        message="Loading the protected dashboard."
+        walletAddress={auth.embeddedSolanaWallet}
+      />
+    );
+  }
 
   const navigateTo = (view: string) => {
     setActive(view);
@@ -616,7 +803,7 @@ useEffect(() => {
             )
           : Number(productForm.inventory);
 
-      const response = await fetch("/api/products", {
+      const response = await authenticatedFetch("/api/products", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -635,6 +822,10 @@ useEffect(() => {
         product?: ApiProduct;
         error?: string;
       };
+
+      if (response.status === 401 || response.status === 403) {
+        setAuthorizationFailure(response.status);
+      }
 
       if (!response.ok || !data.product) {
         throw new Error(data.error || "Unable to create product");
@@ -1182,24 +1373,32 @@ const greeting =
                 aria-controls="account-menu"
                 onClick={() => setOpenTopMenu((current) => current === "account" ? null : "account")}
               >
-                <span className="avatar small">A</span>
-                <span>Aria</span>
+                <span className="avatar small">
+                  {auth.displayName.charAt(0).toUpperCase()}
+                </span>
+                <span>{shortValue(auth.displayName)}</span>
                 <span className="profile-chevron" aria-hidden="true">⌄</span>
               </button>
 
               {openTopMenu === "account" && (
                 <div className="top-menu account-menu" id="account-menu" role="menu" aria-label="Workspace menu">
                   <div className="account-summary">
-                    <span className="avatar">A</span>
+                    <span className="avatar">
+                      {auth.displayName.charAt(0).toUpperCase()}
+                    </span>
                     <div>
-                      <strong>Aria Studio</strong>
-                      <span>Merchant workspace</span>
+                      <strong>{auth.displayName}</strong>
+                      <span title={auth.userId || undefined}>
+                        {auth.userId ? shortValue(auth.userId) : "Privy account"}
+                      </span>
                     </div>
-                    <span className="demo-badge">Demo</span>
+                    <span className="demo-badge">Merchant</span>
                   </div>
-                  <div className="account-detail">
-                    <span>Network</span>
-                    <strong><i /> Solana Devnet</strong>
+                  <div className="account-detail account-wallet-detail">
+                    <span>Embedded Solana wallet</span>
+                    <strong className="mono" title={auth.embeddedSolanaWallet || undefined}>
+                      <i /> {auth.embeddedSolanaWallet || "Provisioning"}
+                    </strong>
                   </div>
                   <button
                     className="top-menu-link"
@@ -1221,6 +1420,14 @@ const greeting =
                   >
                     View deployment <span>↗</span>
                   </a>
+                  <button
+                    className="top-menu-link sign-out-link"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void auth.logout()}
+                  >
+                    Sign out <span>→</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -1270,6 +1477,8 @@ const greeting =
             }
             isLoading={isLoading}
             loadError={loadError}
+            authenticatedFetch={authenticatedFetch}
+            onAuthorizationFailure={setAuthorizationFailure}
           />
         ) : (
           <div className="content-inner">
@@ -1280,7 +1489,7 @@ const greeting =
                 </p>
 
                 <h1>
-                  {greeting}, Aria
+                  {greeting}
                   <span className="heading-period">
                     .
                   </span>

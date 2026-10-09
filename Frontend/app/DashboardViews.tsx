@@ -33,6 +33,11 @@ type Props = {
   onCreateProduct: () => void;
   isLoading: boolean;
   loadError: string;
+  authenticatedFetch: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response>;
+  onAuthorizationFailure: (status: 401 | 403) => void;
 };
 
 function shortAddress(value: string) {
@@ -57,6 +62,8 @@ export function DashboardViews({
   onCreateProduct,
   isLoading,
   loadError,
+  authenticatedFetch,
+  onAuthorizationFailure,
 }: Props) {
   const [editing, setEditing] = useState<DashboardProduct | null>(null);
   const [message, setMessage] = useState("");
@@ -77,7 +84,12 @@ export function DashboardViews({
   const deleteProduct = async (id: string) => {
     if (!window.confirm("Delete this product? This cannot be undone.")) return;
 
-    const response = await fetch(`/api/products/${id}`, { method: "DELETE" });
+    const response = await authenticatedFetch(`/api/products/${id}`, {
+      method: "DELETE",
+    });
+    if (response.status === 401 || response.status === 403) {
+      onAuthorizationFailure(response.status);
+    }
     if (!response.ok) {
       const data = (await response.json()) as { error?: string };
       setMessage(data.error || "Unable to delete product.");
@@ -97,7 +109,7 @@ export function DashboardViews({
 
     try {
       const inventory = productStock(editing);
-      const response = await fetch(`/api/products/${editing.id}`, {
+      const response = await authenticatedFetch(`/api/products/${editing.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -109,6 +121,9 @@ export function DashboardViews({
           variants: editing.variants,
         }),
       });
+      if (response.status === 401 || response.status === 403) {
+        onAuthorizationFailure(response.status);
+      }
       const data = (await response.json()) as {
         product?: {
           name: string;

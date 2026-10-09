@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireMerchant } from "@/lib/backend/auth";
 import { areVariantsValid, normalizeVariants, store } from "@/lib/backend/store";
 
 const merchantId = process.env.MERCHANT_ID || "merchant-aria-studio";
@@ -8,6 +9,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const authentication = await requireMerchant(request);
+  if (!authentication.ok) return authentication.response;
+
   let body: Record<string, unknown>;
 
   try {
