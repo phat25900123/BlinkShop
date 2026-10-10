@@ -18,7 +18,7 @@ import {
 } from "@/lib/backend/sponsored-checkout";
 import { getSolanaSponsorKeypair } from "@/lib/backend/solana-sponsor";
 import { store } from "@/lib/backend/store";
-import type { Order } from "@/lib/backend/types";
+import type { Order, Product } from "@/lib/backend/types";
 
 export const MAX_SPONSORED_FEE_LAMPORTS = 20_000;
 
@@ -26,6 +26,7 @@ export type SponsoredSubmissionErrorCode =
   | "order_not_pending"
   | "order_expired"
   | "order_product_mismatch"
+  | "order_merchant_mismatch"
   | "order_buyer_mismatch"
   | "signed_transaction_invalid"
   | "fee_payer_mismatch"
@@ -108,13 +109,22 @@ function decodeSignedTransaction(value: string) {
 
 function requireOrderForBuyer(
   order: Order,
-  routeProductId: string,
+  product: Product,
   authenticatedBuyerWallet: string,
 ) {
-  if (order.productId !== routeProductId) {
+  if (order.productId !== product.id) {
     throw new SponsoredSubmissionError(
       "order_product_mismatch",
       "The order does not belong to this product.",
+    );
+  }
+  if (
+    order.merchantId !== product.merchantId ||
+    order.merchantWallet !== product.merchantWallet
+  ) {
+    throw new SponsoredSubmissionError(
+      "order_merchant_mismatch",
+      "The order payout destination does not match this product.",
     );
   }
   if (order.buyerWallet !== authenticatedBuyerWallet) {
@@ -140,7 +150,7 @@ function requireOrderForBuyer(
 export async function submitSponsoredCheckoutTransaction(
   input: {
     order: Order;
-    routeProductId: string;
+    product: Product;
     authenticatedBuyerWallet: string;
     signedTransaction: string;
   },
@@ -148,7 +158,7 @@ export async function submitSponsoredCheckoutTransaction(
 ) {
   requireOrderForBuyer(
     input.order,
-    input.routeProductId,
+    input.product,
     input.authenticatedBuyerWallet,
   );
 
@@ -156,6 +166,7 @@ export async function submitSponsoredCheckoutTransaction(
   const sponsor = dependencies.getSponsorKeypair();
   const expected = await getSponsoredPaymentAccounts(
     input.authenticatedBuyerWallet,
+    input.order.merchantWallet,
     input.order.amountUsdc,
   );
   const transaction = decodeSignedTransaction(input.signedTransaction);
@@ -291,7 +302,7 @@ export async function submitSponsoredCheckoutTransaction(
   }
   requireOrderForBuyer(
     currentOrder,
-    input.routeProductId,
+    input.product,
     input.authenticatedBuyerWallet,
   );
   if (

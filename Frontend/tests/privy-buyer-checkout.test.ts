@@ -130,6 +130,18 @@ describe("Privy buyer checkout", () => {
     expect(store.listOrders()).toHaveLength(0);
   });
 
+  it("rejects a browser-supplied merchant payout wallet without mutating state", async () => {
+    const product = addProduct();
+    const response = await createPrivyCheckout(
+      request({ merchantWallet: spoofedWallet, quantity: 1 }),
+      context(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(store.getProduct(product.id)?.inventory).toBe(5);
+    expect(store.listOrders()).toHaveLength(0);
+  });
+
   it("binds the order and transaction to the authenticated embedded wallet", async () => {
     const product = addProduct({ priceUsdc: 0.3 });
     const response = await createPrivyCheckout(
@@ -146,15 +158,38 @@ describe("Privy buyer checkout", () => {
     expect(body.buyerWallet).toBe(buyerWallet);
     expect(body.amountUsdc).toBe(0.6);
     expect(order.buyerWallet).toBe(buyerWallet);
+    expect(order.merchantId).toBe(product.merchantId);
+    expect(order.merchantWallet).toBe(product.merchantWallet);
     expect(order.amountUsdc).toBe(0.6);
     expect(order.sponsoredTransactionHash).toBe(
       "server-prepared-message-hash",
     );
     expect(createSponsoredUsdcTransferTransaction).toHaveBeenCalledWith(
       buyerWallet,
+      product.merchantWallet,
       0.6,
     );
     expect(store.getProduct(product.id)?.inventory).toBe(3);
+  });
+
+  it("routes each product to its own merchant wallet", async () => {
+    const merchantBWallet = "SysvarRent111111111111111111111111111111111";
+    const product = addProduct({
+      merchantId: "did:privy:merchant-b",
+      merchantWallet: merchantBWallet,
+    });
+    const response = await createPrivyCheckout(
+      request({ quantity: 1 }),
+      context(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(createSponsoredUsdcTransferTransaction).toHaveBeenCalledWith(
+      buyerWallet,
+      merchantBWallet,
+      product.priceUsdc,
+    );
+    expect(store.listOrders()[0].merchantWallet).toBe(merchantBWallet);
   });
 
   it("returns 404 for a missing product", async () => {

@@ -15,6 +15,7 @@ export function addProduct(
   const product: Product = {
     id: "product-1",
     merchantId: "merchant-1",
+    merchantWallet: "Vote111111111111111111111111111111111111111",
     name: "Test product",
     description: "Test product",
     priceUsdc: 0.3,

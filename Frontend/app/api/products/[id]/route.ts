@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireMerchant } from "@/lib/backend/auth";
+import { requirePrivyUser } from "@/lib/backend/auth";
 import {
   areVariantsValid,
   normalizeVariants,
@@ -12,6 +12,9 @@ type Context = {
 };
 
 type PatchBody = {
+  merchantId?: unknown;
+  merchantWallet?: unknown;
+  payoutWallet?: unknown;
   name?: unknown;
   description?: unknown;
   priceUsdc?: unknown;
@@ -53,12 +56,15 @@ export async function PATCH(
   request: NextRequest,
   context: Context,
 ) {
-  const authentication = await requireMerchant(request);
+  const authentication = await requirePrivyUser(request);
   if (!authentication.ok) return authentication.response;
 
   const { id } = await context.params;
 
-  const currentProduct = store.getProduct(id);
+  const currentProduct = store.getProductOwnedBy(
+    id,
+    authentication.user.userId,
+  );
 
   if (!currentProduct) {
     return NextResponse.json(
@@ -74,6 +80,17 @@ export async function PATCH(
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON body" },
+      { status: 400 },
+    );
+  }
+
+  if (
+    body.merchantId !== undefined ||
+    body.merchantWallet !== undefined ||
+    body.payoutWallet !== undefined
+  ) {
+    return NextResponse.json(
+      { error: "Merchant identity and payout wallet cannot be changed" },
       { status: 400 },
     );
   }
@@ -248,10 +265,17 @@ export async function DELETE(
   request: NextRequest,
   context: Context,
 ) {
-  const authentication = await requireMerchant(request);
+  const authentication = await requirePrivyUser(request);
   if (!authentication.ok) return authentication.response;
 
   const { id } = await context.params;
+
+  if (!store.getProductOwnedBy(id, authentication.user.userId)) {
+    return NextResponse.json(
+      { error: "Product not found" },
+      { status: 404 },
+    );
+  }
 
   const result = store.deleteProduct(id);
 

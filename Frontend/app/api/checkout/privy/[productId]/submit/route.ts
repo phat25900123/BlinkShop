@@ -88,7 +88,11 @@ export async function POST(request: NextRequest, context: Context) {
       "order_buyer_mismatch",
     );
   }
-  if (order.productId !== productId || order.merchantId !== product.merchantId) {
+  if (
+    order.productId !== productId ||
+    order.merchantId !== product.merchantId ||
+    order.merchantWallet !== product.merchantWallet
+  ) {
     return errorResponse(
       "The order does not belong to this product",
       409,
@@ -106,7 +110,7 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const result = await submitSponsoredCheckoutTransaction({
       order,
-      routeProductId: productId,
+      product,
       authenticatedBuyerWallet: wallet.address,
       signedTransaction: body.signedTransaction.trim(),
     });
@@ -123,6 +127,7 @@ export async function POST(request: NextRequest, context: Context) {
         "order_not_pending",
         "order_expired",
         "order_product_mismatch",
+        "order_merchant_mismatch",
         "blockhash_expired",
       ]);
       const upstreamCodes = new Set(["fee_unavailable", "broadcast_failed"]);

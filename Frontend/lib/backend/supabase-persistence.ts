@@ -3,6 +3,7 @@ import type { Order, Product } from "./types";
 type ProductRow = {
   id: string;
   merchant_id: string;
+  merchant_wallet: string;
   name: string;
   description: string;
   price_usdc: number | string;
@@ -18,6 +19,7 @@ type OrderRow = {
   id: string;
   product_id: string;
   merchant_id: string;
+  merchant_wallet: string;
   buyer_wallet: string;
   variant: string | null;
   quantity: number;
@@ -34,6 +36,7 @@ function productFromRow(row: ProductRow): Product {
   return {
     id: row.id,
     merchantId: row.merchant_id,
+    merchantWallet: row.merchant_wallet,
     name: row.name,
     description: row.description,
     priceUsdc: Number(row.price_usdc),
@@ -50,6 +53,7 @@ function productToRow(product: Product): ProductRow {
   return {
     id: product.id,
     merchant_id: product.merchantId,
+    merchant_wallet: product.merchantWallet,
     name: product.name,
     description: product.description,
     price_usdc: product.priceUsdc,
@@ -67,6 +71,7 @@ function orderFromRow(row: OrderRow): Order {
     id: row.id,
     productId: row.product_id,
     merchantId: row.merchant_id,
+    merchantWallet: row.merchant_wallet,
     buyerWallet: row.buyer_wallet,
     ...(row.variant ? { variant: row.variant } : {}),
     quantity: row.quantity,
@@ -85,6 +90,7 @@ function orderToRow(order: Order): OrderRow {
     id: order.id,
     product_id: order.productId,
     merchant_id: order.merchantId,
+    merchant_wallet: order.merchantWallet,
     buyer_wallet: order.buyerWallet,
     variant: order.variant || null,
     quantity: order.quantity,

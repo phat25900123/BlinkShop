@@ -124,7 +124,7 @@ export function BlinkShopPrivyProvider({ children }: { children: ReactNode }) {
           theme: "light",
           accentColor: "#20211f",
           landingHeader: "Sign in to BlinkShop",
-          loginMessage: "Continue checkout or access the Aria Studio workspace.",
+          loginMessage: "Continue checkout or manage your BlinkShop workspace.",
         },
       }}
     >

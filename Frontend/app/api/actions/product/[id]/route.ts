@@ -343,9 +343,6 @@ export async function POST(
         productId:
           product.id,
 
-        merchantId:
-          product.merchantId,
-
         buyerWallet:
           body.account,
 
@@ -374,6 +371,7 @@ export async function POST(
     const transaction =
       await createUsdcTransferTransaction(
         body.account,
+        order.merchantWallet,
         order.amountUsdc,
       );
 
@@ -429,11 +427,9 @@ export async function POST(
     const config =
       getSolanaConfig();
 
-    const configured =
-      Boolean(
-        config.usdcMint &&
-          config.merchantWallet,
-      );
+    const configured = Boolean(
+      config.usdcMint && product.merchantWallet,
+    );
 
     return actionResponse(
       {

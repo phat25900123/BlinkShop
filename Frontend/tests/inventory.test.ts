@@ -12,7 +12,6 @@ function createOrder(
 ) {
   return store.createOrder({
     productId,
-    merchantId: "merchant-1",
     buyerWallet,
     variant,
     quantity,

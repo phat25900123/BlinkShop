@@ -12,7 +12,9 @@ import {
   state,
 } from "./store-state";
 
-const merchantId = "merchant-aria-studio";
+const merchantId =
+  process.env.PRIVY_MERCHANT_USER_ID?.trim() || "merchant-aria-studio";
+const merchantWallet = process.env.MERCHANT_WALLET?.trim() || "";
 
 function seedProducts() {
   if (state.initialized) {
@@ -25,6 +27,7 @@ function seedProducts() {
   state.products.set("blk-001", {
     id: "blk-001",
     merchantId,
+    merchantWallet,
     name: "Afterglow hoodie",
     description:
       "A limited studio edition hoodie.",
@@ -65,6 +68,7 @@ function seedProducts() {
   state.products.set("blk-002", {
     id: "blk-002",
     merchantId,
+    merchantWallet,
     name: "Signal cap",
     description:
       "A signal for the next drop.",
@@ -85,6 +89,7 @@ function seedProducts() {
   state.products.set("blk-003", {
     id: "blk-003",
     merchantId,
+    merchantWallet,
     name: "Studio pass 2026",
     description:
       "Access to the Aria Studio session.",
@@ -200,12 +205,26 @@ export const store = {
     ].map(refreshStatus);
   },
 
+  listProductsByMerchant(selectedMerchantId: string) {
+    return store
+      .listProducts()
+      .filter((product) => product.merchantId === selectedMerchantId);
+  },
+
   getProduct(id: string) {
     const product =
       products.get(id);
 
     return product
       ? refreshStatus(product)
+      : undefined;
+  },
+
+  getProductOwnedBy(id: string, selectedMerchantId: string) {
+    const product = store.getProduct(id);
+
+    return product?.merchantId === selectedMerchantId
+      ? product
       : undefined;
   },
 
@@ -333,10 +352,24 @@ export const store = {
     );
   },
 
+  listOrdersByMerchant(selectedMerchantId: string) {
+    return store
+      .listOrders()
+      .filter((order) => order.merchantId === selectedMerchantId);
+  },
+
   getOrder(id: string) {
     expirePendingOrders();
 
     return orders.get(id);
+  },
+
+  getOrderOwnedBy(id: string, selectedMerchantId: string) {
+    const order = store.getOrder(id);
+
+    return order?.merchantId === selectedMerchantId
+      ? order
+      : undefined;
   },
 
   bindSponsoredTransaction(id: string, messageHash: string) {
@@ -384,6 +417,8 @@ export const store = {
       | "expiresAt"
       | "inventoryReserved"
       | "sponsoredTransactionHash"
+      | "merchantId"
+      | "merchantWallet"
     >,
   ) {
     const product =
@@ -470,6 +505,9 @@ export const store = {
 
     const order: Order = {
       ...input,
+
+      merchantId: product.merchantId,
+      merchantWallet: product.merchantWallet,
 
       id: `order-${randomUUID().slice(
         0,

@@ -284,7 +284,7 @@ export function DashboardViews({
           <h1>Products<span className="heading-period">.</span></h1>
           <p className="subheading">Manage the products available through your Blinks.</p>
         </div>
-        <button className="primary-button" type="button" onClick={onCreateProduct}><span>＋</span> Create product</button>
+        <button className="primary-button create-product-button" type="button" onClick={onCreateProduct}><span className="create-product-icon" aria-hidden="true" /> Create product</button>
       </div>
 
       {loadError && <p className="inline-alert error" role="alert">{loadError}</p>}

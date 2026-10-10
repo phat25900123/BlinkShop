@@ -28,13 +28,13 @@ export default async function BlinkFallback({ params }: Context) {
         <div className="blink-fallback-brand"><span className="brand-mark">B</span><span className="brand-wordmark">Blink<span className="brand-wordmark-accent">Shop</span></span><span className="network-chip">Solana Devnet</span></div>
         <div className="blink-fallback-image" role="img" aria-label={product.name} style={product.imageUrl ? { backgroundImage: `url(${product.imageUrl})` } : undefined} />
         <div className="blink-fallback-content">
-          <p className="eyebrow">ARIA STUDIO</p>
+          <p className="eyebrow">BLINKSHOP MERCHANT</p>
           <h1>{product.name}</h1>
           <p className="blink-fallback-description">{product.description}</p>
           <div className="blink-fallback-price"><strong>{product.priceUsdc.toFixed(2)} <small>USDC</small></strong><span className={availability === "Sold out" ? "sold-out-text" : ""}>{availability}</span></div>
           <BlinkCheckout product={product} />
           {process.env.NODE_ENV !== "production" && <a className="blink-fallback-action-link" href={actionUrl}>View Action metadata <span>↗</span></a>}
-          <p className="blink-fallback-note">Direct checkout by Aria Studio. Payments are settled in Devnet USDC.</p>
+          <p className="blink-fallback-note">Direct merchant checkout. Payments settle to the product owner in Devnet USDC.</p>
         </div>
       </div>
     </main>

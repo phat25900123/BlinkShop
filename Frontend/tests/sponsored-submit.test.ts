@@ -20,7 +20,7 @@ import {
   submitSponsoredCheckoutTransaction,
   type SponsoredSubmissionDependencies,
 } from "../lib/backend/sponsored-submit";
-import type { Order } from "../lib/backend/types";
+import type { Order, Product } from "../lib/backend/types";
 
 const keypair = (offset: number) =>
   Keypair.fromSeed(
@@ -40,6 +40,7 @@ function order(overrides: Partial<Order> = {}): Order {
     id: "order-1",
     productId: "product-1",
     merchantId: "merchant-1",
+    merchantWallet: merchant.publicKey.toBase58(),
     buyerWallet: buyer.publicKey.toBase58(),
     quantity: 2,
     amountUsdc: 0.6,
@@ -48,6 +49,24 @@ function order(overrides: Partial<Order> = {}): Order {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    ...overrides,
+  };
+}
+
+function product(overrides: Partial<Product> = {}): Product {
+  return {
+    id: "product-1",
+    merchantId: "merchant-1",
+    merchantWallet: merchant.publicKey.toBase58(),
+    name: "Test product",
+    description: "Test product",
+    priceUsdc: 0.3,
+    imageUrl: "",
+    inventory: 5,
+    status: "active",
+    variants: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -115,6 +134,7 @@ async function submit(
   transaction: Transaction,
   deps = dependencies(),
   checkoutOrder = order(),
+  checkoutProduct = product(),
 ) {
   const boundOrder = {
     ...checkoutOrder,
@@ -126,7 +146,7 @@ async function submit(
   return submitSponsoredCheckoutTransaction(
     {
       order: boundOrder,
-      routeProductId: "product-1",
+      product: checkoutProduct,
       authenticatedBuyerWallet: buyer.publicKey.toBase58(),
       signedTransaction: serialized(transaction),
     },
@@ -217,13 +237,55 @@ describe("BlinkShop server-side sponsored submission", () => {
       submitSponsoredCheckoutTransaction(
         {
           order: order(),
-          routeProductId: "another-product",
+          product: product({ id: "another-product" }),
           authenticatedBuyerWallet: buyer.publicKey.toBase58(),
           signedTransaction: serialized(await signedTransaction()),
         },
         dependencies(),
       ),
     ).rejects.toMatchObject({ code: "order_product_mismatch" });
+  });
+
+  it.each([
+    ["merchant DID", { merchantId: "did:privy:attacker" }],
+    ["merchant wallet", { merchantWallet: attacker.publicKey.toBase58() }],
+  ])("rejects an order with a mismatched %s before sponsor signing", async (_label, override) => {
+    const deps = dependencies();
+    await expect(
+      submit(await signedTransaction(), deps, order(override)),
+    ).rejects.toMatchObject({ code: "order_merchant_mismatch" });
+    expect(deps.signWithSponsor).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the fresh order merchant snapshot before sponsor signing", async () => {
+    const checkoutOrder = order();
+    const deps = dependencies({
+      getCurrentOrder: vi.fn(() =>
+        order({ merchantWallet: attacker.publicKey.toBase58() }),
+      ),
+    });
+    const transaction = await signedTransaction();
+    const boundOrder = {
+      ...checkoutOrder,
+      sponsoredTransactionHash: getSponsoredTransactionMessageHash(transaction),
+    };
+    deps.getCurrentOrder = vi.fn(() => ({
+      ...boundOrder,
+      merchantWallet: attacker.publicKey.toBase58(),
+    }));
+
+    await expect(
+      submitSponsoredCheckoutTransaction(
+        {
+          order: boundOrder,
+          product: product(),
+          authenticatedBuyerWallet: buyer.publicKey.toBase58(),
+          signedTransaction: serialized(transaction),
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({ code: "order_merchant_mismatch" });
+    expect(deps.signWithSponsor).not.toHaveBeenCalled();
   });
 
   it("rejects a tampered fee payer", async () => {

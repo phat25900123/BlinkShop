@@ -11,6 +11,7 @@ export type ProductVariant = {
 export type Product = {
   id: string;
   merchantId: string;
+  merchantWallet: string;
   name: string;
   description: string;
   priceUsdc: number;
@@ -26,6 +27,7 @@ export type Order = {
   id: string;
   productId: string;
   merchantId: string;
+  merchantWallet: string;
   buyerWallet: string;
   variant?: string;
   quantity: number;

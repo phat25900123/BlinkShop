@@ -89,6 +89,31 @@ button { font: inherit; }
   white-space: nowrap;
 }
 
+.settings-badge.setup-required {
+  background: #fff1d6;
+  color: #8a641f;
+}
+
+.payout-readiness-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 1088px;
+  margin: 24px auto 0;
+  padding: 13px 16px;
+  border: 1px solid #ead6a7;
+  border-radius: 10px;
+  background: #fff8e8;
+  color: #6d592d;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.payout-readiness-banner strong {
+  flex: 0 0 auto;
+  color: #4f411f;
+}
+
 @media (max-width: 900px) {
   .settings-grid {
     grid-template-columns: 1fr;
@@ -97,6 +122,14 @@ button { font: inherit; }
   .settings-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 700px) {
+  .payout-readiness-banner {
+    align-items: flex-start;
+    flex-direction: column;
+    margin: 16px 18px 0;
   }
 }
 

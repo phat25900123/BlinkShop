@@ -65,6 +65,7 @@ function configuredPublicKey(value: string | undefined, label: string) {
 
 export async function getSponsoredPaymentAccounts(
   buyerWallet: string,
+  merchantWallet: string,
   amountUsdc: number,
 ) {
   const mint = configuredPublicKey(
@@ -72,8 +73,8 @@ export async function getSponsoredPaymentAccounts(
     "SOLANA_USDC_MINT",
   );
   const merchant = configuredPublicKey(
-    process.env.MERCHANT_WALLET,
-    "MERCHANT_WALLET",
+    merchantWallet,
+    "merchantWallet",
   );
   const buyer = new PublicKey(buyerWallet);
   const amount = BigInt(Math.round(amountUsdc * 10 ** USDC_DECIMALS));
@@ -113,6 +114,7 @@ function defaultDependencies(rpcUrl: string): SponsoredCheckoutDependencies {
 
 export async function createSponsoredUsdcTransferTransaction(
   buyerWallet: string,
+  merchantWallet: string,
   amountUsdc: number,
   dependencies?: SponsoredCheckoutDependencies,
 ) {
@@ -123,7 +125,11 @@ export async function createSponsoredUsdcTransferTransaction(
     amount,
     buyerTokenAccount,
     merchantTokenAccount,
-  } = await getSponsoredPaymentAccounts(buyerWallet, amountUsdc);
+  } = await getSponsoredPaymentAccounts(
+    buyerWallet,
+    merchantWallet,
+    amountUsdc,
+  );
   const sponsor = getSolanaSponsorPublicKey();
   const operations =
     dependencies ??

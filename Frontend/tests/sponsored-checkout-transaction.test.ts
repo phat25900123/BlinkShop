@@ -22,6 +22,7 @@ import {
 const mint = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
 const buyer = Keypair.generate().publicKey;
 const merchant = Keypair.generate().publicKey;
+const merchantB = Keypair.generate().publicKey;
 const sponsor = Keypair.fromSeed(Uint8Array.from({ length: 32 }, (_, i) => i + 1));
 
 describe("sponsored Privy transaction construction", () => {
@@ -41,9 +42,10 @@ describe("sponsored Privy transaction construction", () => {
 
   async function dependencies(
     accounts: "both" | "buyer-only" | "none",
+    selectedMerchant = merchant,
   ): Promise<SponsoredCheckoutDependencies> {
     const buyerAta = await getAssociatedTokenAddress(mint, buyer);
-    const merchantAta = await getAssociatedTokenAddress(mint, merchant);
+    const merchantAta = await getAssociatedTokenAddress(mint, selectedMerchant);
 
     return {
       getLatestBlockhash: async () => ({
@@ -55,7 +57,7 @@ describe("sponsored Privy transaction construction", () => {
           return { mint, owner: buyer };
         }
         if (accounts === "both" && address.equals(merchantAta)) {
-          return { mint, owner: merchant };
+          return { mint, owner: selectedMerchant };
         }
         return null;
       },
@@ -65,6 +67,7 @@ describe("sponsored Privy transaction construction", () => {
   it("builds one exact checked USDC transfer with no ATA or close instruction", async () => {
     const result = await createSponsoredUsdcTransferTransaction(
       buyer.toBase58(),
+      merchant.toBase58(),
       0.6,
       await dependencies("both"),
     );
@@ -104,6 +107,7 @@ describe("sponsored Privy transaction construction", () => {
     await expect(
       createSponsoredUsdcTransferTransaction(
         buyer.toBase58(),
+        merchant.toBase58(),
         0.3,
         await dependencies("none"),
       ),
@@ -116,11 +120,44 @@ describe("sponsored Privy transaction construction", () => {
     await expect(
       createSponsoredUsdcTransferTransaction(
         buyer.toBase58(),
+        merchant.toBase58(),
         0.3,
         await dependencies("buyer-only"),
       ),
     ).rejects.toMatchObject({
       code: "merchant_usdc_account_missing",
     } satisfies Partial<SponsoredCheckoutError>);
+  });
+
+  it("routes merchant B checkout to merchant B even when the legacy global points to A", async () => {
+    vi.stubEnv("MERCHANT_WALLET", merchant.toBase58());
+    const result = await createSponsoredUsdcTransferTransaction(
+      buyer.toBase58(),
+      merchantB.toBase58(),
+      0.3,
+      await dependencies("both", merchantB),
+    );
+    const transaction = Transaction.from(
+      Buffer.from(result.serializedTransaction, "base64"),
+    );
+    const transfer = decodeTransferCheckedInstruction(
+      transaction.instructions[0],
+    );
+
+    expect(result.merchantWallet).toBe(merchantB.toBase58());
+    expect(transfer.keys.destination.pubkey.toBase58()).toBe(
+      (await getAssociatedTokenAddress(mint, merchantB)).toBase58(),
+    );
+  });
+
+  it("rejects a missing product-owned merchant payout wallet", async () => {
+    await expect(
+      createSponsoredUsdcTransferTransaction(
+        buyer.toBase58(),
+        "",
+        0.3,
+        await dependencies("both"),
+      ),
+    ).rejects.toMatchObject({ code: "configuration_missing" });
   });
 });

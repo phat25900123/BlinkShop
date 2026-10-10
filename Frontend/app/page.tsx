@@ -53,6 +53,13 @@ type ApiOrder = {
   txSignature?: string;
 };
 
+type MerchantProfile = {
+  merchantId: string;
+  payoutWallet: string;
+  payoutUsdcAta: string;
+  payoutReady: boolean;
+};
+
 type DashboardOrder = {
   id: string;
   product: string;
@@ -166,7 +173,22 @@ function paymentErrorMessage(error: unknown) {
   return "Payment could not be completed. Please try again.";
 }
 
-function SettingsView() {
+function SettingsView({
+  displayName,
+  embeddedWallet,
+  profile,
+}: {
+  displayName: string;
+  embeddedWallet: string | null;
+  profile: MerchantProfile | null;
+}) {
+  const payoutWallet = profile?.payoutWallet || embeddedWallet;
+  const payoutStatus = profile
+    ? profile.payoutReady
+      ? "Ready"
+      : "Setup required"
+    : "Checking";
+
   return (
     <div className="content-inner">
       <div className="page-heading">
@@ -188,13 +210,15 @@ function SettingsView() {
         <article className="stat-card">
           <div className="stat-top">
             <span>Workspace</span>
-            <span className="stat-icon mint">A</span>
+            <span className="stat-icon mint">
+              {displayName.charAt(0).toUpperCase() || "M"}
+            </span>
           </div>
 
-          <strong>Aria Studio</strong>
+          <strong title={displayName}>{shortValue(displayName)}</strong>
 
           <div className="stat-foot">
-            <span>Merchant workspace</span>
+            <span>Your merchant workspace</span>
           </div>
         </article>
 
@@ -213,7 +237,7 @@ function SettingsView() {
 
         <article className="stat-card">
           <div className="stat-top">
-            <span>Checkout</span>
+            <span>Payment asset</span>
             <span className="stat-icon lilac">↗</span>
           </div>
 
@@ -241,7 +265,7 @@ function SettingsView() {
         <div className="settings-row">
           <div>
             <strong>Merchant workspace</strong>
-            <p>Aria Studio</p>
+            <p>{displayName}</p>
           </div>
 
           <span className="settings-badge">
@@ -251,36 +275,45 @@ function SettingsView() {
 
         <div className="settings-row">
           <div>
-            <strong>Blockchain network</strong>
-            <p>Solana Devnet</p>
+            <strong>Payout wallet</strong>
+            <p className="mono" title={payoutWallet || undefined}>
+              {payoutWallet ? shortValue(payoutWallet) : "Provisioning"}
+            </p>
+          </div>
+
+          <span className={`settings-badge ${profile?.payoutReady ? "" : "setup-required"}`}>
+            {payoutStatus}
+          </span>
+        </div>
+
+        <div className="settings-row">
+          <div>
+            <strong>Payout status</strong>
+            <p>
+              {profile?.payoutReady
+                ? "Your embedded wallet can receive Devnet USDC payments."
+                : "Receive Devnet USDC once to create the token account required for checkout."}
+            </p>
+            {profile?.payoutUsdcAta && (
+              <small className="mono" title={profile.payoutUsdcAta}>
+                USDC account: {shortValue(profile.payoutUsdcAta)}
+              </small>
+            )}
+          </div>
+
+          <span className={`settings-badge ${profile?.payoutReady ? "" : "setup-required"}`}>
+            {payoutStatus}
+          </span>
+        </div>
+
+        <div className="settings-row">
+          <div>
+            <strong>Network and asset</strong>
+            <p>Solana Devnet · USDC</p>
           </div>
 
           <span className="settings-badge">
             Devnet
-          </span>
-        </div>
-
-        <div className="settings-row">
-          <div>
-            <strong>Payment asset</strong>
-            <p>USDC</p>
-          </div>
-
-          <span className="settings-badge">
-            Enabled
-          </span>
-        </div>
-
-        <div className="settings-row">
-          <div>
-            <strong>Blink checkout</strong>
-            <p>
-              Social-native checkout is enabled for your products.
-            </p>
-          </div>
-
-          <span className="settings-badge">
-            Enabled
           </span>
         </div>
       </section>
@@ -300,24 +333,24 @@ function SettingsView() {
       <section className="settings-panel">
         <div className="settings-row">
           <div>
-            <strong>Environment</strong>
-            <p>Development / Hackathon</p>
+            <strong>Buyer fee sponsorship</strong>
+            <p>BlinkShop pays the Solana network fee for Privy checkout.</p>
           </div>
 
           <span className="settings-badge">
-            Hackathon
+            Sponsored
           </span>
         </div>
 
         <div className="settings-row">
           <div>
             <strong>Authentication and wallets</strong>
-            <p>Privy authentication with an embedded Solana wallet.</p>
-            <small>Checkout continues to use Phantom during Phase 1.</small>
+            <p>Privy email login with an embedded Solana wallet.</p>
+            <small>Privy is the primary sponsored checkout. Phantom remains the Action fallback.</small>
           </div>
 
           <span className="settings-badge">
-            Phase 1
+            Privy
           </span>
         </div>
 
@@ -401,12 +434,15 @@ export default function Home() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
+  const [merchantProfile, setMerchantProfile] = useState<MerchantProfile | null>(
+    null,
+  );
 
   const [loadError, setLoadError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
-  const [authorizationFailure, setAuthorizationFailure] = useState<
-    401 | 403 | null
-  >(null);
+  const [authorizationFailure, setAuthorizationFailure] = useState<401 | null>(
+    null,
+  );
 
   const [showCreateProduct, setShowCreateProduct] = useState(false);
 
@@ -474,26 +510,26 @@ export default function Home() {
    * the dashboard after creating a product or completing payment.
    */
 const fetchDashboardData = useCallback(async () => {
-  const [productsResponse, ordersResponse] = await Promise.all([
-    fetch("/api/products", {
+  const [productsResponse, ordersResponse, profileResponse] = await Promise.all([
+    authenticatedFetch("/api/products?mine=1", {
       cache: "no-store",
     }),
     authenticatedFetch("/api/orders", {
       cache: "no-store",
     }),
+    authenticatedFetch("/api/merchant/me", {
+      cache: "no-store",
+    }),
   ]);
 
-  if (ordersResponse.status === 401) {
+  if (
+    productsResponse.status === 401 ||
+    ordersResponse.status === 401 ||
+    profileResponse.status === 401
+  ) {
     throw new MerchantAuthorizationError(
       401,
       "Your BlinkShop session has expired",
-    );
-  }
-
-  if (ordersResponse.status === 403) {
-    throw new MerchantAuthorizationError(
-      403,
-      "This account is not authorized for the Aria Studio workspace",
     );
   }
 
@@ -508,6 +544,9 @@ const fetchDashboardData = useCallback(async () => {
   const orderData = (await ordersResponse.json()) as {
     orders: ApiOrder[];
   };
+  const profileData = profileResponse.ok
+    ? ((await profileResponse.json()) as MerchantProfile)
+    : null;
 
   const loadedProducts = productData.products.map(toProduct);
 
@@ -540,6 +579,7 @@ const fetchDashboardData = useCallback(async () => {
   return {
     products: loadedProducts,
     orders: loadedOrders,
+    profile: profileData,
   };
 }, [authenticatedFetch]);
 
@@ -551,9 +591,10 @@ const loadDashboard = useCallback(async () => {
 
     setProducts(data.products);
     setOrders(data.orders);
+    setMerchantProfile(data.profile);
   } catch (error) {
-    if (error instanceof MerchantAuthorizationError) {
-      setAuthorizationFailure(error.status);
+    if (error instanceof MerchantAuthorizationError && error.status === 401) {
+      setAuthorizationFailure(401);
     }
 
     setLoadError(
@@ -581,6 +622,7 @@ useEffect(() => {
 
       setProducts(data.products);
       setOrders(data.orders);
+      setMerchantProfile(data.profile);
       setLoadError("");
       setIsLoading(false);
     })
@@ -589,8 +631,8 @@ useEffect(() => {
         return;
       }
 
-      if (error instanceof MerchantAuthorizationError) {
-        setAuthorizationFailure(error.status);
+      if (error instanceof MerchantAuthorizationError && error.status === 401) {
+        setAuthorizationFailure(401);
       }
 
       setLoadError(
@@ -671,7 +713,7 @@ useEffect(() => {
       <MerchantAccessState
         eyebrow="MERCHANT AUTHENTICATION"
         title="Privy setup required"
-        message="Set NEXT_PUBLIC_PRIVY_APP_ID, PRIVY_APP_SECRET, and PRIVY_MERCHANT_USER_ID to enable the merchant dashboard. Public Blink checkout remains available."
+        message="Set NEXT_PUBLIC_PRIVY_APP_ID and PRIVY_APP_SECRET to enable merchant workspaces. Public Blink checkout remains available."
       />
     );
   }
@@ -689,9 +731,9 @@ useEffect(() => {
   if (!auth.authenticated) {
     return (
       <MerchantAccessState
-        eyebrow="ARIA STUDIO WORKSPACE"
+        eyebrow="MERCHANT WORKSPACE"
         title="Sign in to BlinkShop"
-        message="Authenticate with Privy to manage products and review customer orders."
+        message="Create and manage your merchant workspace with Privy."
         action={{
           label: "Sign in",
           onClick: () => {
@@ -700,18 +742,6 @@ useEffect(() => {
             auth.login();
           },
         }}
-      />
-    );
-  }
-
-  if (authorizationFailure === 403) {
-    return (
-      <MerchantAccessState
-        eyebrow="ARIA STUDIO WORKSPACE"
-        title="Workspace access denied"
-        message="This Privy account is authenticated but is not authorized for this merchant workspace."
-        walletAddress={auth.embeddedSolanaWallet}
-        action={{ label: "Sign out", onClick: () => void auth.logout() }}
       />
     );
   }
@@ -730,9 +760,9 @@ useEffect(() => {
   if (isLoading) {
     return (
       <MerchantAccessState
-        eyebrow="ARIA STUDIO WORKSPACE"
-        title="Verifying merchant access"
-        message="Loading the protected dashboard."
+        eyebrow="MERCHANT WORKSPACE"
+        title="Preparing your workspace"
+        message="Loading your products, orders, and payout status."
         walletAddress={auth.embeddedSolanaWallet}
       />
     );
@@ -823,8 +853,8 @@ useEffect(() => {
         error?: string;
       };
 
-      if (response.status === 401 || response.status === 403) {
-        setAuthorizationFailure(response.status);
+      if (response.status === 401) {
+        setAuthorizationFailure(401);
       }
 
       if (!response.ok || !data.product) {
@@ -1252,14 +1282,16 @@ const greeting =
         </div>
 
         <div className="workspace-switcher">
-          <span className="avatar">A</span>
+          <span className="avatar">
+            {auth.displayName.charAt(0).toUpperCase() || "M"}
+          </span>
 
           <span>
-            <b>Aria Studio</b>
+            <b title={auth.displayName}>{shortValue(auth.displayName)}</b>
             <small>Merchant workspace</small>
           </span>
 
-          <span className="workspace-tag">Demo</span>
+          <span className="workspace-tag">Mine</span>
         </div>
 
         <nav className="main-nav">
@@ -1451,8 +1483,22 @@ const greeting =
           ))}
         </nav>
 
+        {merchantProfile && !merchantProfile.payoutReady && (
+          <div className="payout-readiness-banner" role="status">
+            <strong>Payout setup required</strong>
+            <span>
+              Your embedded wallet needs a Devnet USDC token account before
+              customers can check out. Receive Devnet USDC once, then refresh.
+            </span>
+          </div>
+        )}
+
         {active === "Settings" ? (
-          <SettingsView />
+          <SettingsView
+            displayName={auth.displayName || "Your workspace"}
+            embeddedWallet={auth.embeddedSolanaWallet}
+            profile={merchantProfile}
+          />
         ) : active === "Products" ||
           active === "Orders" ||
           active === "Blink links" ? (
@@ -1478,7 +1524,13 @@ const greeting =
             isLoading={isLoading}
             loadError={loadError}
             authenticatedFetch={authenticatedFetch}
-            onAuthorizationFailure={setAuthorizationFailure}
+            onAuthorizationFailure={(status) => {
+              if (status === 401) {
+                setAuthorizationFailure(401);
+              } else {
+                setLoadError("You can only manage products in your own workspace.");
+              }
+            }}
           />
         ) : (
           <div className="content-inner">
@@ -1902,7 +1954,7 @@ const greeting =
               <h2 id="quick-checkout-title">{selectedProduct.name}</h2>
 
               <p className="checkout-description">
-                {selectedProduct.description || "A direct, wallet-native purchase from Aria Studio."}
+                {selectedProduct.description || "A direct, wallet-native purchase from this merchant."}
               </p>
 
               {selectedProduct.variants.length >

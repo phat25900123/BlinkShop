@@ -16,7 +16,6 @@ function reserveOrder() {
   const product = store.getProduct("product-1") ?? addProduct({ inventory: 6 });
   const order = store.createOrder({
     productId: product.id,
-    merchantId: product.merchantId,
     buyerWallet,
     quantity: 1,
     amountUsdc: product.priceUsdc,
@@ -54,6 +53,11 @@ describe("transaction signature protection", () => {
       order: { id: order.id, txSignature: "signature-a", status: "paid" },
     });
     expect(store.getProduct(order.productId)?.inventory).toBe(inventoryAfterPayment);
+    expect(verifyUsdcPayment).toHaveBeenCalledWith("signature-a", {
+      buyerWallet: order.buyerWallet,
+      merchantWallet: order.merchantWallet,
+      amountUsdc: order.amountUsdc,
+    });
   });
 
   it("rejects one signature being used for a different order", async () => {

@@ -59,31 +59,7 @@ export async function requirePrivyUser(
 
 export const requireAuthenticatedUser = requirePrivyUser;
 
-export async function requireMerchant(request: Request): Promise<AuthResult> {
-  const authentication = await requirePrivyUser(request);
-
-  if (!authentication.ok) {
-    return authentication;
-  }
-
-  const merchantUserId = process.env.PRIVY_MERCHANT_USER_ID?.trim();
-
-  if (!merchantUserId) {
-    return {
-      ok: false,
-      response: errorResponse(
-        "Merchant authorization is not configured",
-        503,
-      ),
-    };
-  }
-
-  if (authentication.user.userId !== merchantUserId) {
-    return {
-      ok: false,
-      response: errorResponse("Forbidden", 403),
-    };
-  }
-
-  return authentication;
-}
+// A merchant workspace is available to every authenticated Privy user.
+// Resource ownership is enforced by each product/order route, not by a global
+// DID allowlist. Keep this alias for callers that describe merchant intent.
+export const requireMerchant = requirePrivyUser;

@@ -1,42 +1,46 @@
 # BlinkShop
 
-Social-native checkout infrastructure on Solana.
+Self-service, social-native USDC checkout infrastructure on Solana.
 
-- **Live Demo:** https://blinkshop.up.railway.app
+- **Live demo:** https://blinkshop.up.railway.app
 - **Example Blink:** https://blinkshop.up.railway.app/blink/blk-001
 - **Network:** Solana Devnet
 - **Payment:** SPL USDC
-- **Wallet:** Phantom
-- **Repository app:** [`Frontend/`](./Frontend)
+- **Authentication:** Privy email login
+- **Wallets:** Privy embedded Solana wallet; Phantom Action fallback
+- **Application:** [`Frontend/`](./Frontend)
 
 ## Core flow
 
 ```text
-Social content
+Any authenticated Privy merchant
       ↓
-     Blink
+Own products + own orders + embedded payout wallet
       ↓
-Variant + quantity
+Shareable Blink → buyer chooses variant + quantity
       ↓
-    Phantom
+Privy buyer signs exact SPL USDC transfer
       ↓
- SPL USDC transaction
+BlinkShop sponsor pays the Devnet fee and broadcasts
       ↓
-  Solana Devnet
+Backend verifies buyer + mint + owner payout + exact amount
       ↓
-Backend verification
-      ↓
-  Order = Paid
-      ↓
-Inventory updated
+Order = Paid → inventory finalized
 ```
 
-The backend reserves inventory before creating a payment transaction. It marks an order paid only after independently verifying the successful on-chain transfer, expected buyer, USDC mint, merchant recipient, exact amount, token balance deltas, and transaction-signature uniqueness.
+The verified Privy DID is the merchant identity. New products bind the
+merchant's server-resolved embedded Solana wallet, orders snapshot that payout,
+and private product/order APIs filter by DID. Browser-supplied identity, wallet,
+amount, mint, or fee-payer values are never trusted.
 
-## Technical documentation
+The Railway hackathon deployment uses one JSON file on a persistent volume and
+must stay at one replica. It demonstrates logical merchant isolation, not
+production multi-tenant persistence.
 
-- [Application setup and operation](./Frontend/README.md)
+## Documentation
+
+- [Setup, environment, APIs, and deployment](./Frontend/README.md)
 - [Architecture and trust boundaries](./docs/ARCHITECTURE.md)
 - [Payment verification](./docs/PAYMENT_VERIFICATION.md)
 - [Security tests](./docs/SECURITY_TESTS.md)
-- [Judge demo script](./docs/DEMO.md)
+- [Merchant A / Merchant B / Buyer C demo](./docs/DEMO.md)

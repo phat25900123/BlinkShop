@@ -2,7 +2,7 @@
 
 The deterministic suite lives in `Frontend/tests/` and runs with `npm test`. It uses an in-memory store and parsed-transaction fixtures: no Phantom session, public RPC, Railway service, or funded wallet is required.
 
-Last local verification for this server-sponsored Phase 2 pass: **101 tests across 11 test files passed**. The final quality-gate results should also be checked in the task report or CI run for the working tree under review.
+Current Phase 3 working-tree verification: **142 tests across 14 test files passed**. The final quality-gate results should also be checked in the task report or CI run for the working tree under review.
 
 ## Results
 
@@ -23,6 +23,13 @@ Last local verification for this server-sponsored Phase 2 pass: **101 tests acro
 | Sponsor transaction shape | Only one exact SPL `TransferChecked` is eligible; ATA creation, close, System, Compute Budget, and extra instructions are rejected. | Builder and server submission tests. | PASS |
 | Sponsor signing boundary | The buyer signature, fee payer, order ownership/status, accounts, mint, amount, decimals, blockhash, and fee cap are checked before the sponsor signs. | Deterministic partial-signature and tamper tests. | PASS |
 | Broadcast safety | Fully signed bytes verify before broadcast; an ambiguous RPC failure leaves the order pending. | Deterministic broadcast dependency tests. | PASS |
+| Self-service access | Any valid Privy user receives a workspace without matching a global DID. Missing/invalid/config-error states remain controlled. | Merchant auth route tests. | PASS |
+| Product tenant isolation | Private list, PATCH, and DELETE are scoped to the verified DID; merchant fields are immutable. | Cross-merchant product API tests. | PASS |
+| Order tenant isolation | Merchant lists/details contain only owned orders; manual order creation requires product ownership. | Cross-merchant order API/store tests. | PASS |
+| Payout snapshot | Orders copy merchant DID and wallet from the product; callers cannot provide them. | Store and route tests. | PASS |
+| Multi-merchant routing | Privy sponsored checkout, Phantom Actions, sponsored submit, and confirmation use the product/order merchant wallet instead of the legacy global. | Transaction-builder, Action, submit, and verifier tests. | PASS |
+| Merchant readiness | Authenticated profile returns only the current DID/wallet and accurately reports exact ATA presence/owner/mint. | Merchant profile and Solana readiness tests. | PASS |
+| Legacy JSON compatibility | Missing legacy payout snapshots and Aria IDs normalize only through optional legacy inputs; new ownership is unchanged. | Legacy normalization tests. | PASS |
 | 4F — Memo binding | Transaction carries and verifies its `orderId`. | Not present in the MVP. | DEFERRED / NOT IMPLEMENTED |
 
 ## Manual review checklist

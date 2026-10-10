@@ -23,7 +23,14 @@ function completedAction(
 
 type Context = { params: Promise<{ id: string }> };
 
-async function verifyWithRetry(signature: string, expected: { buyerWallet: string; amountUsdc: number }) {
+async function verifyWithRetry(
+  signature: string,
+  expected: {
+    buyerWallet: string;
+    merchantWallet: string;
+    amountUsdc: number;
+  },
+) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const result = await verifyUsdcPayment(signature, expected);
     if (result !== "pending") return result;
@@ -106,7 +113,11 @@ if (order.status === "failed") {
 
     const existing = store.findOrderBySignature(body.signature);
     if (existing && existing.id !== order.id) return actionResponse({ message: "Transaction signature already used" }, 409);
-    const verification = await verifyWithRetry(body.signature, { buyerWallet: order.buyerWallet, amountUsdc: order.amountUsdc });
+    const verification = await verifyWithRetry(body.signature, {
+      buyerWallet: order.buyerWallet,
+      merchantWallet: order.merchantWallet,
+      amountUsdc: order.amountUsdc,
+    });
     if (verification === "pending") {
   return actionResponse(
     {

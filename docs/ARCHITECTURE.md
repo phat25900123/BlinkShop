@@ -1,86 +1,115 @@
 # Architecture
 
-BlinkShop is a Next.js application that combines a merchant workspace, buyer-facing Blink checkout, Solana Action endpoints, and server-side order state.
+BlinkShop combines self-service merchant workspaces, buyer-facing Blinks,
+Solana Actions, sponsored Privy checkout, and server-side order/inventory state.
+
+## Identity and tenant boundary
 
 ```text
-Buyer / Blink UI
-       ↓
-Privy authentication binds the buyer's embedded Solana wallet
-       ↓
-Backend reserves inventory and creates one exact USDC TransferChecked
-       ↓
-Privy wallet signs only; the browser does not broadcast
-       ↓
-Backend validates the order, transaction, and buyer signature
-       ↓
-Dedicated BlinkShop Devnet fee payer signs and backend broadcasts
-       ↓
-Backend fetches and verifies transaction
-       ↓
-Verify buyer + mint + amount + merchant + balance deltas
-       ↓
-Order = Paid
-       ↓
-Reserved inventory becomes final
-       ↓
-Persistent JSON store
+Privy bearer token
+      ↓ server verification
+authenticated user DID ──────────────> merchantId
+      ↓ Privy Node SDK
+embedded Solana wallet ──────────────> merchantWallet
 
-Phantom / Solana Action fallback
-       ↓
-Existing Action transaction + external-wallet broadcast
-       ↓
-Same independent backend payment verification
+Merchant A                               Merchant B
+DID A / wallet A                         DID B / wallet B
+  ├─ products A                            ├─ products B
+  ├─ orders A only                         ├─ orders B only
+  └─ payout ATA A                          └─ payout ATA B
 ```
+
+Authentication asks whether the token represents a valid Privy user.
+Authorization separately checks whether that DID owns the requested product or
+order. `PRIVY_MERCHANT_USER_ID` is not an allowlist; it is only an optional
+legacy-data claim input.
+
+Public buyers can discover products and purchase any active product. Private
+product lists, order lists/details, and mutations are tenant-filtered.
+
+## Payment flow
+
+```text
+Public product + buyer choice
+       ↓
+Server loads product owner and resolves authenticated buyer wallet
+       ↓
+Store reserves stock and snapshots merchantId + merchantWallet on order
+       ↓
+One exact USDC TransferChecked
+  buyer ATA → order merchant ATA
+  buyer = transfer authority
+  BlinkShop sponsor = fee payer
+       ↓
+Privy buyer signs only
+       ↓
+Server validates message hash, signer, instruction, accounts, mint,
+amount, decimals, blockhash, fee cap, and fresh order/product consistency
+       ↓
+Sponsor signs last; server broadcasts with preflight
+       ↓
+Independent confirmation verifies transaction + token balance deltas
+       ↓
+Order Paid; reserved inventory becomes final
+```
+
+The Phantom/Solana Action fallback builds a transaction for the same
+`product.merchantWallet`. Confirmation uses `order.merchantWallet`, never a
+browser-provided or global destination.
 
 ## Components
 
-- `Frontend/app/`: merchant dashboard, Blink checkout, and Next.js API routes.
-- `Frontend/lib/backend/store.ts`: product, order, reservation, expiry, and signature state transitions.
-- `Frontend/lib/backend/solana.ts`: unsigned SPL USDC transaction construction and on-chain verification.
-- `Frontend/lib/backend/sponsored-checkout.ts`: narrow Privy checkout transaction containing one `TransferChecked` with the BlinkShop sponsor as fee payer.
-- `Frontend/lib/backend/sponsored-submit.ts`: buyer-signature, instruction, account, amount, fee, sponsor-signing, and Devnet broadcast boundary.
-- `Frontend/lib/backend/store-persistence.ts`: JSON persistence. Railway mounts its persistent volume at `/data` through `DATA_DIR=/data`.
-- `Frontend/app/api/actions/product/[id]/`: Solana Action metadata, transaction creation, and confirmation.
-
-The deployed MVP runs one Railway instance. Its persistent volume survives service restarts, but the JSON store has no distributed locking and is not safe for multiple application replicas. Supabase schema and adapter groundwork exist but are intentionally inactive.
+- `Frontend/app/`: dashboard, Blink checkout, and Route Handlers.
+- `Frontend/app/api/merchant/me`: authenticated embedded payout wallet and ATA
+  readiness.
+- `Frontend/lib/backend/store.ts`: tenant queries plus product/order lifecycle.
+- `Frontend/lib/backend/solana.ts`: Phantom transfer builder, payout readiness,
+  and on-chain verifier.
+- `Frontend/lib/backend/sponsored-checkout.ts`: narrow sponsored transaction.
+- `Frontend/lib/backend/sponsored-submit.ts`: pre-sponsor validation/broadcast.
+- `Frontend/lib/backend/store-persistence.ts`: JSON storage and legacy record
+  normalization.
 
 ## Trust boundaries
 
-The system trusts:
+Trusted:
 
-- Solana transaction data fetched by the backend from the configured RPC.
-- Server-owned product, price, inventory, order, merchant, and payment configuration.
+- verified Privy token claims and server-side Privy user lookup;
+- server-owned product/order state;
+- configured Devnet mint and sponsor key;
+- Solana transaction evidence fetched by the backend.
 
-The system does **not** trust:
+Untrusted:
 
-- Frontend-reported payment success.
-- Frontend-reported amount or merchant destination.
-- Arbitrary client order state.
-- A transaction signature merely because the browser submitted it.
-- A buyer-signed transaction until every instruction and signer is revalidated before the server sponsor signs it.
+- browser-supplied DID, merchant wallet, buyer wallet, mint, amount, or fee payer;
+- client-reported payment success;
+- a signature or partially signed transaction before full validation;
+- arbitrary instructions in a sponsored transaction.
 
-The client chooses a product variant and quantity and requests a transaction. The server creates the pending order, reserves inventory, calculates the amount, selects the configured merchant, and builds the transaction. Confirmation is a separate server-side verification step.
+The sponsor key is server-only and Devnet-only. The sponsored path rejects ATA
+creation, account closure, arbitrary programs, extra instructions, mismatched
+accounts, invalid buyer signatures, expired blockhashes, and fees over the cap.
 
-The dedicated sponsor key is server-only and Devnet-only. Privy signs the buyer authority but does not sponsor or broadcast. The server refuses extra instructions, ATA creation, account closure, arbitrary programs, mismatched accounts or amounts, invalid buyer signatures, expired blockhashes, and unexpectedly high fees before applying its fee-payer signature.
+## Persistence boundary
 
-## On-chain and off-chain state
+Railway runs one replica with `DATA_STORE=json`, `DATA_DIR=/data`, and one
+persistent volume. The JSON store is synchronous and provides tested logical
+isolation in one process, but it has no distributed locks, database tenant
+constraints, row-level policies, audit log, or safe multi-replica writes.
 
-On-chain:
+The inactive Supabase scaffold is not enabled. Production scaling requires a
+transactional repository with atomic reservation/release/confirmation and
+database-enforced tenant/signature constraints.
 
-- Transaction and success/failure result.
-- Buyer authority and source token account.
-- Merchant destination token account.
-- USDC mint and transferred amount.
-- Token balance changes and transaction signature proof.
+## Legacy compatibility
 
-Off-chain:
+On load, records missing `merchantWallet` use optional legacy
+`MERCHANT_WALLET`; `merchant-aria-studio` can map to optional
+`PRIVY_MERCHANT_USER_ID`. Normalized values are written naturally on the next
+store mutation. These variables never authorize users or route new products.
 
-- Products and variants.
-- Inventory and pending reservations.
-- Orders, expiry, and order status.
-- Stored transaction signature.
-- Merchant workspace data.
+## Why there is no custom program
 
-## Why the MVP has no custom program
-
-Native Solana transactions and the SPL Token program provide the payment primitive required by this MVP: a buyer-authorized USDC transfer with independently verifiable transaction evidence. Product, order, and inventory rules remain server-side. A future design may add a custom program if requirements call for on-chain escrow, settlement rules, or other programmable guarantees; the MVP does not add one without a concrete need.
+The SPL Token program supplies the payment primitive required by this MVP.
+Product, reservation, and inventory rules remain server-side. A custom program
+is deferred until escrow or programmable settlement is a concrete requirement.

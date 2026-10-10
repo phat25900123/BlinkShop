@@ -67,7 +67,6 @@ function createPendingOrder(buyerWallet = "buyer-wallet") {
   const product = store.getProduct("product-1") ?? addProduct();
   const order = store.createOrder({
     productId: product.id,
-    merchantId: product.merchantId,
     buyerWallet,
     quantity: 1,
     amountUsdc: product.priceUsdc,
@@ -125,7 +124,7 @@ describe("Privy sponsored transaction submission route", () => {
       expect.objectContaining({
         order: expect.objectContaining({ id: order.id }),
         authenticatedBuyerWallet: "buyer-wallet",
-        routeProductId: "product-1",
+        product: expect.objectContaining({ id: "product-1" }),
       }),
     );
     expect(store.getOrder(order.id)?.status).toBe("pending");

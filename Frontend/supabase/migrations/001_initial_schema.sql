@@ -5,6 +5,7 @@
 create table if not exists public.products (
   id text primary key,
   merchant_id text not null,
+  merchant_wallet text not null,
   name text not null check (char_length(name) > 0),
   description text not null default '',
   price_usdc numeric(20, 6) not null check (price_usdc > 0),
@@ -20,6 +21,7 @@ create table if not exists public.orders (
   id text primary key,
   product_id text not null references public.products(id) on delete restrict,
   merchant_id text not null,
+  merchant_wallet text not null,
   buyer_wallet text not null,
   variant text,
   quantity integer not null check (quantity > 0),

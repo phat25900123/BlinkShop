@@ -128,7 +128,6 @@ export async function POST(request: NextRequest, context: Context) {
 
   const order = store.createOrder({
     productId: product.id,
-    merchantId: product.merchantId,
     buyerWallet: wallet.address,
     variant: variant?.value,
     quantity,
@@ -140,6 +139,7 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const transaction = await createSponsoredUsdcTransferTransaction(
       wallet.address,
+      order.merchantWallet,
       order.amountUsdc,
     );
     const boundOrder = store.bindSponsoredTransaction(

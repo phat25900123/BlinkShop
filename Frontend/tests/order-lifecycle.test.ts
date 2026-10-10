@@ -10,7 +10,6 @@ function reserve(quantity = 2) {
   const product = addProduct({ inventory: 5 });
   const order = store.createOrder({
     productId: product.id,
-    merchantId: product.merchantId,
     buyerWallet,
     quantity,
     amountUsdc: product.priceUsdc * quantity,

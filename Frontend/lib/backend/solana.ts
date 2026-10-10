@@ -4,25 +4,45 @@ import {
   Transaction,
   type ParsedTransactionWithMeta,
 } from "@solana/web3.js";
-import { createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
-
-const rpcUrl = process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com";
-const usdcMint = process.env.SOLANA_USDC_MINT;
-const merchantWallet = process.env.MERCHANT_WALLET;
+import {
+  createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
+  getAccount,
+  getAssociatedTokenAddress,
+  TokenError,
+} from "@solana/spl-token";
 
 export function getSolanaConfig() {
-  return { rpcUrl, usdcMint, merchantWallet };
+  return {
+    rpcUrl: process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com",
+    usdcMint: process.env.SOLANA_USDC_MINT,
+    // Legacy compatibility only. New payment routing always uses the product
+    // and order merchantWallet snapshot.
+    merchantWallet: process.env.MERCHANT_WALLET,
+  };
 }
 
-function requireConfig() {
-  if (!usdcMint || !merchantWallet) throw new Error("Solana payment configuration is missing");
-  return { mint: new PublicKey(usdcMint), merchant: new PublicKey(merchantWallet) };
+function requirePaymentConfig(merchantWallet: string) {
+  const { usdcMint } = getSolanaConfig();
+
+  if (!usdcMint || !merchantWallet.trim()) {
+    throw new Error("Solana payment configuration is missing");
+  }
+
+  return {
+    mint: new PublicKey(usdcMint),
+    merchant: new PublicKey(merchantWallet),
+  };
 }
 
-export async function createUsdcTransferTransaction(buyerWallet: string, amountUsdc: number) {
-  const { mint, merchant } = requireConfig();
+export async function createUsdcTransferTransaction(
+  buyerWallet: string,
+  merchantWallet: string,
+  amountUsdc: number,
+) {
+  const { mint, merchant } = requirePaymentConfig(merchantWallet);
   const buyer = new PublicKey(buyerWallet);
-  const connection = new Connection(rpcUrl, "confirmed");
+  const connection = new Connection(getSolanaConfig().rpcUrl, "confirmed");
   const [buyerTokenAccount, merchantTokenAccount, latestBlockhash] = await Promise.all([
     getAssociatedTokenAddress(mint, buyer),
     getAssociatedTokenAddress(mint, merchant),
@@ -70,6 +90,12 @@ transaction.add(
 }
 
 export type PaymentVerification = "valid" | "invalid" | "pending";
+
+export type PaymentVerificationDependencies = {
+  getParsedTransaction: (
+    signature: string,
+  ) => Promise<ParsedTransactionWithMeta | null>;
+};
 
 type PaymentValidationExpectation = {
   amountBaseUnits: number;
@@ -185,10 +211,25 @@ export function validateUsdcPaymentTransaction(
   );
 }
 
-export async function verifyUsdcPayment(signature: string, expected: { buyerWallet: string; amountUsdc: number }): Promise<PaymentVerification> {
-  const { mint, merchant } = requireConfig();
-  const connection = new Connection(rpcUrl, "confirmed");
-  const transaction = await connection.getParsedTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+export async function verifyUsdcPayment(
+  signature: string,
+  expected: {
+    buyerWallet: string;
+    merchantWallet: string;
+    amountUsdc: number;
+  },
+  injectedDependencies?: PaymentVerificationDependencies,
+): Promise<PaymentVerification> {
+  const { mint, merchant } = requirePaymentConfig(expected.merchantWallet);
+  const transaction = injectedDependencies
+    ? await injectedDependencies.getParsedTransaction(signature)
+    : await new Connection(
+        getSolanaConfig().rpcUrl,
+        "confirmed",
+      ).getParsedTransaction(signature, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      });
   if (!transaction) return "pending";
   if (transaction.meta?.err) return "invalid";
   const expectedAmount = Math.round(expected.amountUsdc * 1_000_000);
@@ -211,4 +252,49 @@ return validateUsdcPaymentTransaction(transaction, {
 })
   ? "valid"
   : "invalid";
+}
+
+type PayoutTokenAccount = {
+  mint: PublicKey;
+  owner: PublicKey;
+};
+
+export type MerchantPayoutReadinessDependencies = {
+  loadTokenAccount: (address: PublicKey) => Promise<PayoutTokenAccount | null>;
+};
+
+export async function getMerchantPayoutReadiness(
+  payoutWallet: string,
+  injectedDependencies?: MerchantPayoutReadinessDependencies,
+) {
+  const { mint, merchant } = requirePaymentConfig(payoutWallet);
+  const payoutUsdcAta = await getAssociatedTokenAddress(mint, merchant);
+  const dependencies =
+    injectedDependencies ??
+    {
+      loadTokenAccount: async (address: PublicKey) => {
+        try {
+          return await getAccount(
+            new Connection(getSolanaConfig().rpcUrl, "confirmed"),
+            address,
+            "confirmed",
+          );
+        } catch (error) {
+          if (error instanceof TokenError) {
+            return null;
+          }
+
+          throw error;
+        }
+      },
+    };
+  const account = await dependencies.loadTokenAccount(payoutUsdcAta);
+
+  return {
+    payoutUsdcAta: payoutUsdcAta.toBase58(),
+    payoutReady:
+      Boolean(account) &&
+      account!.mint.equals(mint) &&
+      account!.owner.equals(merchant),
+  };
 }
