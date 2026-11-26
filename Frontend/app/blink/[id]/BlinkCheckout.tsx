@@ -9,6 +9,7 @@ import { Transaction } from "@solana/web3.js";
 
 import { useBlinkShopAuth } from "@/components/providers/PrivyProvider";
 import type { Product } from "@/lib/backend/types";
+import { explorerTxUrl } from "@/lib/escrow-ui";
 import { getSolanaProvider } from "@/lib/phantom";
 
 type CheckoutStatus =
@@ -432,7 +433,9 @@ export function BlinkCheckout({ product }: { product: Product }) {
         <div className="success-mark">OK</div>
         <p className="checkout-eyebrow">PAYMENT CONFIRMED</p>
         <h2>Your order is paid.</h2>
-        <p className="success-copy">The USDC transfer was verified on Solana Devnet.</p>
+        <p className="success-copy">
+          Your USDC is held in escrow on Solana Devnet until the order is delivered.
+        </p>
         <dl className="receipt-details">
           <div><dt>Order ID</dt><dd>{receipt.orderId}</dd></div>
           <div><dt>Amount</dt><dd>{formatUsdc(total)} USDC</dd></div>
@@ -444,10 +447,26 @@ export function BlinkCheckout({ product }: { product: Product }) {
         {receipt.sponsored && (
           <p className="sponsorship-note">Network fee sponsored by BlinkShop</p>
         )}
+        {!receipt.sponsored && (
+          <p className="order-note">
+            Paid from an external wallet. Order tracking, confirming receipt and
+            claiming a refund on BlinkShop need an email sign-in, so they aren&apos;t
+            available for this order. Contact the merchant with your order ID if
+            anything goes wrong; they can still ship or refund it.
+          </p>
+        )}
         <div className="receipt-actions">
+          {receipt.sponsored && (
+            <a
+              className="primary-button"
+              href={`/order/${encodeURIComponent(receipt.orderId)}`}
+            >
+              Track your order
+            </a>
+          )}
           <a
-            className="primary-button"
-            href={`https://explorer.solana.com/tx/${receipt.signature}?cluster=devnet`}
+            className={receipt.sponsored ? "secondary-button" : "primary-button"}
+            href={explorerTxUrl(receipt.signature)}
             target="_blank"
             rel="noreferrer"
           >
