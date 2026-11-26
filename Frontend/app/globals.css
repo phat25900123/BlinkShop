@@ -1960,3 +1960,24 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Escrow lifecycle: badges, countdowns and actions */
+.table-row-full { min-width: 1380px; grid-template-columns: 1fr 1.3fr 1.1fr .7fr .4fr .9fr 1.4fr 1.1fr 1fr 1.6fr; }
+.order-status.funded { background: #e8f0fb; color: #3d5f8f; }
+.order-status.funded i { background: #5b84c4; }
+.order-status.shipped { background: #f1ecfa; color: #66508f; }
+.order-status.shipped i { background: #8a6cc4; }
+.order-status.released { background: var(--success-bg); color: var(--success-ink); }
+.order-status.refunded { background: #ecece7; color: #676b63; }
+.order-status.refunded i { background: #aaa9a2; }
+.lifecycle-cell { display: grid; gap: 4px; justify-items: start; }
+.lifecycle-countdown { color: #74786f; font-size: 10px; font-variant-numeric: tabular-nums; }
+.lifecycle-note { color: #8d7447; font-size: 10px; }
+.tx-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.escrow-actions { display: grid; gap: 6px; }
+.escrow-action-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.escrow-actions.compact .secondary-button,
+.escrow-actions.compact .danger-button { min-height: 30px; padding: 5px 9px; font-size: 10px; }
+.escrow-actions button:disabled { cursor: progress; opacity: .6; }
+.escrow-action-error { margin: 0; color: #a65e50; font-size: 11px; line-height: 1.4; }
+.stat-foot b { color: #43443f; font-weight: 700; }

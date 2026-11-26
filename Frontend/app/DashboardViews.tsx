@@ -1,6 +1,21 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+
+import {
+  EscrowActionButtons,
+  useNow,
+} from "@/components/escrow/EscrowActionButtons";
+import { useBlinkShopAuth } from "@/components/providers/PrivyProvider";
+import {
+  explorerTxUrl,
+  formatCountdown,
+  merchantActions,
+  type EscrowTiming,
+  type OrderStatusName,
+  type OrderView,
+  type SyncResponse,
+} from "@/lib/escrow-ui";
 
 type DashboardProduct = {
   id: string;
@@ -19,16 +34,22 @@ type DashboardOrder = {
   buyer: string;
   amount: number;
   status: string;
+  tone: string;
+  rawStatus: OrderStatusName;
+  settlement: "escrow" | "direct";
+  sponsored: boolean;
   time: string;
   variant?: string;
   quantity: number;
   txSignature?: string;
+  escrowActionSignature?: string;
 };
 
 type Props = {
   active: "Products" | "Orders" | "Blink links";
   products: DashboardProduct[];
   orders: DashboardOrder[];
+  onOrderUpdate: (order: OrderView) => void;
   onProductsChange: (products: DashboardProduct[]) => void;
   onCreateProduct: () => void;
   isLoading: boolean;
@@ -54,10 +75,178 @@ function productStock(product: DashboardProduct) {
     : product.inventory;
 }
 
+function OrderLifecycleStatus({
+  order,
+  timing,
+  now,
+}: {
+  order: DashboardOrder;
+  timing: EscrowTiming | null | undefined;
+  now: number;
+}) {
+  const protectionLeft =
+    order.rawStatus === "shipped" ? formatCountdown(timing?.releaseAfter, now) : null;
+  const shipLeft =
+    order.rawStatus === "paid" && order.settlement === "escrow"
+      ? formatCountdown(timing?.shipBy, now)
+      : null;
+
+  return (
+    <span className="lifecycle-cell">
+      <span className={`order-status ${order.tone}`}><i />{order.status}</span>
+      {protectionLeft && (
+        <small className="lifecycle-countdown">
+          {protectionLeft === "ended"
+            ? "Protection window ended"
+            : `Protection ends in ${protectionLeft}`}
+        </small>
+      )}
+      {shipLeft && (
+        <small className="lifecycle-countdown">
+          {shipLeft === "ended" ? "Ship deadline passed" : `Ship within ${shipLeft}`}
+        </small>
+      )}
+      {order.settlement === "escrow" && !order.sponsored && (
+        <small className="lifecycle-note" title="Paid from an external wallet via Blink">
+          External wallet
+        </small>
+      )}
+    </span>
+  );
+}
+
+function MerchantOrdersTable({
+  orders,
+  authenticatedFetch,
+  onOrderUpdate,
+  onAuthorizationFailure,
+}: {
+  orders: DashboardOrder[];
+  authenticatedFetch: Props["authenticatedFetch"];
+  onOrderUpdate: Props["onOrderUpdate"];
+  onAuthorizationFailure: Props["onAuthorizationFailure"];
+}) {
+  const auth = useBlinkShopAuth();
+  const now = useNow();
+  const [timings, setTimings] = useState<Record<string, EscrowTiming | null>>({});
+  const requested = useRef(new Set<string>());
+
+  // Escrow orders with funds still locked: sync each once with the chain to
+  // pick up changes made elsewhere and the deadlines for the countdowns.
+  const activeIds = orders
+    .filter(
+      (order) =>
+        order.settlement === "escrow" &&
+        (order.rawStatus === "paid" || order.rawStatus === "shipped"),
+    )
+    .map((order) => order.id)
+    .slice(0, 25)
+    .join(",");
+
+  // Parent callbacks are recreated on every render; keep the latest in refs
+  // so a re-render neither re-runs the sync nor drops in-flight results.
+  const callbacks = useRef({ authenticatedFetch, onOrderUpdate, onAuthorizationFailure });
+  useEffect(() => {
+    callbacks.current = { authenticatedFetch, onOrderUpdate, onAuthorizationFailure };
+  });
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const ids = activeIds
+      ? activeIds.split(",").filter((id) => !requested.current.has(id))
+      : [];
+    for (const id of ids) {
+      requested.current.add(id);
+      void (async () => {
+        try {
+          const response = await callbacks.current.authenticatedFetch(
+            `/api/orders/${encodeURIComponent(id)}/escrow`,
+            { method: "POST" },
+          );
+          if (!mounted.current) return;
+          if (response.status === 401 || response.status === 403) {
+            callbacks.current.onAuthorizationFailure(response.status);
+            return;
+          }
+          if (!response.ok) return;
+          const data = (await response.json()) as SyncResponse;
+          if (!mounted.current) return;
+          setTimings((current) => ({ ...current, [id]: data.escrow }));
+          if (data.changed) callbacks.current.onOrderUpdate(data.order);
+        } catch {
+          // A failed read only hides the countdown; actions re-check on-chain.
+        }
+      })();
+    }
+  }, [activeIds]);
+
+  const settle =
+    (id: string) =>
+    (result: { txSignature: string; synced: SyncResponse | null }) => {
+      const synced = result.synced;
+      if (!synced) return;
+      setTimings((current) => ({ ...current, [id]: synced.escrow }));
+      onOrderUpdate(synced.order);
+    };
+
+  return (
+    <section className="orders-table orders-table-full" aria-label="Orders">
+      <div className="table-row table-row-full table-head">
+        <span>Order</span><span>Product</span><span>Buyer</span><span>Variant</span>
+        <span>Qty</span><span>Amount</span><span>Status</span><span>Placed</span>
+        <span>Transactions</span><span>Actions</span>
+      </div>
+      {orders.map((order) => {
+        const actions = merchantActions(
+          { status: order.rawStatus, settlement: order.settlement },
+          timings[order.id] ?? null,
+          now,
+        );
+        return (
+          <div className="table-row table-row-full" key={order.id}>
+            <strong title={order.id}>{shortAddress(order.id)}</strong>
+            <span>{order.product}</span>
+            <span className="mono" title={order.buyer}>{shortAddress(order.buyer)}</span>
+            <span>{order.variant || "—"}</span>
+            <span>{order.quantity}</span>
+            <span>{order.amount.toFixed(2)} USDC</span>
+            <OrderLifecycleStatus order={order} timing={timings[order.id]} now={now} />
+            <time className="muted">{order.time}</time>
+            <span className="tx-links">
+              {order.txSignature ? (
+                <a className="table-link table-link-button" href={explorerTxUrl(order.txSignature)} target="_blank" rel="noreferrer" title={order.txSignature}>Payment ↗</a>
+              ) : <span className="muted">—</span>}
+              {order.escrowActionSignature && (
+                <a className="table-link table-link-button" href={explorerTxUrl(order.escrowActionSignature)} target="_blank" rel="noreferrer" title={order.escrowActionSignature}>Latest action ↗</a>
+              )}
+            </span>
+            {auth.configured && actions.length > 0 ? (
+              <EscrowActionButtons
+                compact
+                orderId={order.id}
+                role="merchant"
+                actions={actions}
+                onSettled={settle(order.id)}
+              />
+            ) : <span className="muted">—</span>}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 export function DashboardViews({
   active,
   products,
   orders,
+  onOrderUpdate,
   onProductsChange,
   onCreateProduct,
   isLoading,
@@ -207,27 +396,12 @@ export function DashboardViews({
         {isLoading ? (
           <div className="loading-panel" role="status">Loading orders…</div>
         ) : orders.length > 0 ? (
-          <section className="orders-table orders-table-full" aria-label="Orders">
-            <div className="table-row table-row-full table-head">
-              <span>Order</span><span>Product</span><span>Buyer</span><span>Variant</span>
-              <span>Qty</span><span>Amount</span><span>Status</span><span>Placed</span><span>Transaction</span>
-            </div>
-            {orders.map((order) => (
-              <div className="table-row table-row-full" key={order.id}>
-                <strong title={order.id}>{shortAddress(order.id)}</strong>
-                <span>{order.product}</span>
-                <span className="mono" title={order.buyer}>{shortAddress(order.buyer)}</span>
-                <span>{order.variant || "—"}</span>
-                <span>{order.quantity}</span>
-                <span>{order.amount.toFixed(2)} USDC</span>
-                <span className={`order-status ${statusClass(order.status)}`}><i />{order.status}</span>
-                <time className="muted">{order.time}</time>
-                {order.txSignature ? (
-                  <a className="table-link table-link-button" href={`https://explorer.solana.com/tx/${order.txSignature}?cluster=devnet`} target="_blank" rel="noreferrer" title={order.txSignature}>View tx ↗</a>
-                ) : <span className="muted">—</span>}
-              </div>
-            ))}
-          </section>
+          <MerchantOrdersTable
+            orders={orders}
+            authenticatedFetch={authenticatedFetch}
+            onOrderUpdate={onOrderUpdate}
+            onAuthorizationFailure={onAuthorizationFailure}
+          />
         ) : (
           <div className="empty-state"><strong>No orders yet</strong><p>Your first Blink payment will appear here.</p></div>
         )}

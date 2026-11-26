@@ -12,6 +12,12 @@ import { Transaction } from "@solana/web3.js";
 import { DashboardViews } from "./DashboardViews";
 import { useBlinkShopAuth } from "@/components/providers/PrivyProvider";
 import { getSolanaProvider, } from "@/lib/phantom";
+import {
+  lifecycleBadge,
+  revenueSummary,
+  type OrderStatusName,
+  type OrderView,
+} from "@/lib/escrow-ui";
 
 type Product = {
   id: string;
@@ -46,11 +52,14 @@ type ApiOrder = {
   productId: string;
   buyerWallet: string;
   amountUsdc: number;
-  status: "pending" | "paid" | "failed" | "cancelled";
+  status: OrderStatusName;
+  settlement: "escrow" | "direct";
+  sponsored: boolean;
   createdAt: string;
   variant?: string;
   quantity: number;
   txSignature?: string;
+  escrowActionSignature?: string;
 };
 
 type MerchantProfile = {
@@ -65,12 +74,56 @@ type DashboardOrder = {
   product: string;
   buyer: string;
   amount: number;
+  /** Lifecycle badge label (Funded, Shipped, ...). */
   status: string;
+  /** Badge colour class. */
+  tone: string;
+  rawStatus: OrderStatusName;
+  settlement: "escrow" | "direct";
+  sponsored: boolean;
   time: string;
   variant?: string;
   quantity: number;
   txSignature?: string;
+  escrowActionSignature?: string;
 };
+
+function toDashboardOrder(
+  order: Pick<
+    ApiOrder,
+    | "id"
+    | "productId"
+    | "buyerWallet"
+    | "amountUsdc"
+    | "status"
+    | "settlement"
+    | "sponsored"
+    | "createdAt"
+    | "variant"
+    | "quantity"
+    | "txSignature"
+    | "escrowActionSignature"
+  >,
+  productName: string,
+): DashboardOrder {
+  const badge = lifecycleBadge(order);
+  return {
+    id: order.id,
+    product: productName,
+    buyer: order.buyerWallet,
+    amount: order.amountUsdc,
+    status: badge.label,
+    tone: badge.tone,
+    rawStatus: order.status,
+    settlement: order.settlement,
+    sponsored: order.sponsored,
+    time: new Date(order.createdAt).toLocaleString(),
+    variant: order.variant,
+    quantity: order.quantity,
+    txSignature: order.txSignature,
+    escrowActionSignature: order.escrowActionSignature,
+  };
+}
 
 class MerchantAuthorizationError extends Error {
   constructor(
@@ -558,23 +611,12 @@ const fetchDashboardData = useCallback(async () => {
   );
 
   const loadedOrders: DashboardOrder[] =
-    orderData.orders.map((order) => ({
-      id: order.id,
-      product:
-        productNames.get(order.productId) ||
-        order.productId,
-      buyer: order.buyerWallet,
-      amount: order.amountUsdc,
-      status:
-        order.status.charAt(0).toUpperCase() +
-        order.status.slice(1),
-      time: new Date(
-        order.createdAt,
-      ).toLocaleString(),
-      variant: order.variant,
-      quantity: order.quantity,
-      txSignature: order.txSignature,
-    }));
+    orderData.orders.map((order) =>
+      toDashboardOrder(
+        order,
+        productNames.get(order.productId) || order.productId,
+      ),
+    );
 
   return {
     products: loadedProducts,
@@ -1232,19 +1274,19 @@ if (wallet.signAndSendTransaction) {
   /**
    * Real dashboard statistics.
    */
-  const paidOrders = orders.filter(
-    (order) => order.status.toLowerCase() === "paid",
+  const revenue = revenueSummary(
+    orders.map((order) => ({
+      status: order.rawStatus,
+      settlement: order.settlement,
+      amountUsdc: order.amount,
+    })),
   );
 
-  const totalSales = paidOrders.reduce(
-    (total, order) => total + order.amount,
-    0,
-  );
-
-  const totalSalesLabel = new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(totalSales);
+  const usdcLabel = (value: number) =>
+    new Intl.NumberFormat("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
 
   const now = new Date();
 
@@ -1506,6 +1548,18 @@ const greeting =
             active={active}
             products={products}
             orders={orders}
+            onOrderUpdate={(view: OrderView) =>
+              setOrders((current) =>
+                current.map((order) =>
+                  order.id === view.id
+                    ? toDashboardOrder(
+                        view,
+                        order.product,
+                      )
+                    : order,
+                ),
+              )
+            }
             onProductsChange={(updatedProducts) =>
               setProducts(
                 updatedProducts.map((product) => ({
@@ -1567,19 +1621,19 @@ const greeting =
             <section className="stats-grid">
               <article className="stat-card">
                 <div className="stat-top">
-                  <span>Total sales</span>
+                  <span>Released revenue</span>
                   <span className="stat-icon mint">
                     ↗
                   </span>
                 </div>
 
                 <strong>
-                  {totalSalesLabel} <small>USDC</small>
+                  {usdcLabel(revenue.released)} <small>USDC</small>
                 </strong>
 
                 <div className="stat-foot">
                   <span>
-                    Confirmed revenue
+                    In escrow: <b>{usdcLabel(revenue.inEscrow)} USDC</b>
                   </span>
                 </div>
               </article>
@@ -1869,7 +1923,7 @@ const greeting =
                     </span>
 
                     <span
-                      className={`order-status ${order.status.toLowerCase()}`}
+                      className={`order-status ${order.tone}`}
                     >
                       <i />
                       {order.status}
