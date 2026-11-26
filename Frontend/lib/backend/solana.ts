@@ -12,6 +12,15 @@ import {
   TokenError,
 } from "@solana/spl-token";
 
+import {
+  decodeEscrowOrderAccount,
+  escrowOrderId,
+  findEscrowOrderAddress,
+  findEscrowVaultAddress,
+} from "@/lib/backend/escrow";
+import { getEscrowConfig } from "@/lib/backend/escrow-config";
+import { usdcToBaseUnits } from "@/lib/backend/sponsor-limits";
+
 export function getSolanaConfig() {
   return {
     rpcUrl: process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com",
@@ -297,4 +306,131 @@ export async function getMerchantPayoutReadiness(
       account!.mint.equals(mint) &&
       account!.owner.equals(merchant),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Escrow payment verification
+// ---------------------------------------------------------------------------
+
+type EscrowAccountInfo = {
+  owner: PublicKey;
+  data: Buffer | Uint8Array;
+};
+
+type EscrowVaultAccount = {
+  mint: PublicKey;
+  /** SPL token authority of the vault. */
+  owner: PublicKey;
+  amount: bigint;
+};
+
+export type EscrowPaymentVerificationDependencies = {
+  getParsedTransaction: (
+    signature: string,
+  ) => Promise<ParsedTransactionWithMeta | null>;
+  getAccountInfo: (address: PublicKey) => Promise<EscrowAccountInfo | null>;
+  loadTokenAccount: (address: PublicKey) => Promise<EscrowVaultAccount | null>;
+};
+
+export type EscrowPaymentExpectation = {
+  orderId: string;
+  buyerWallet: string;
+  merchantWallet: string;
+  amountUsdc: number;
+};
+
+function defaultEscrowVerificationDependencies(): EscrowPaymentVerificationDependencies {
+  const connection = new Connection(getSolanaConfig().rpcUrl, "confirmed");
+  return {
+    getParsedTransaction: (signature) =>
+      connection.getParsedTransaction(signature, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      }),
+    getAccountInfo: (address) => connection.getAccountInfo(address, "confirmed"),
+    loadTokenAccount: async (address) => {
+      try {
+        return await getAccount(connection, address, "confirmed");
+      } catch (error) {
+        if (error instanceof TokenError) return null;
+        throw error;
+      }
+    },
+  };
+}
+
+/**
+ * Proves a BlinkShop order is funded by reading on-chain escrow state, not
+ * token balance deltas:
+ *
+ * 1. The submitted signature is a successful transaction that touched this
+ *    order's PDA through the escrow program (ties the stored signature to the
+ *    order so it cannot be an unrelated transaction).
+ * 2. The order PDA (seeds "order", merchant, sha256(order id)) is owned by the
+ *    escrow program and decodes as an `Order` whose order id, merchant, buyer,
+ *    mint and amount all equal the server's own record, with status Funded.
+ * 3. The vault PDA is a token account for that mint, whose authority is the
+ *    order PDA, holding exactly the order amount.
+ *
+ * Every expected value comes from the server order snapshot and server
+ * configuration; nothing reported by the client is trusted.
+ */
+export async function verifyEscrowPayment(
+  signature: string,
+  expected: EscrowPaymentExpectation,
+  injectedDependencies?: EscrowPaymentVerificationDependencies,
+): Promise<PaymentVerification> {
+  const { mint, merchant } = requirePaymentConfig(expected.merchantWallet);
+  const { programId } = getEscrowConfig();
+  const buyer = new PublicKey(expected.buyerWallet);
+  const amount = usdcToBaseUnits(expected.amountUsdc);
+  const onChainOrderId = escrowOrderId(expected.orderId);
+  const orderAddress = findEscrowOrderAddress(programId, merchant, onChainOrderId);
+  const vaultAddress = findEscrowVaultAddress(programId, orderAddress);
+  const dependencies =
+    injectedDependencies ?? defaultEscrowVerificationDependencies();
+
+  const transaction = await dependencies.getParsedTransaction(signature);
+  if (!transaction) return "pending";
+  if (transaction.meta?.err) return "invalid";
+
+  const accountKeys = transaction.transaction.message.accountKeys.map((entry) =>
+    entry.pubkey.toBase58(),
+  );
+  if (
+    !accountKeys.includes(programId.toBase58()) ||
+    !accountKeys.includes(orderAddress.toBase58())
+  ) {
+    return "invalid";
+  }
+
+  const orderAccount = await dependencies.getAccountInfo(orderAddress);
+  // The transaction is visible but the account is not yet: RPC lag.
+  if (!orderAccount) return "pending";
+  if (!orderAccount.owner.equals(programId)) return "invalid";
+
+  const order = decodeEscrowOrderAccount(orderAccount.data);
+  if (
+    !order ||
+    !order.orderId.equals(onChainOrderId) ||
+    !order.merchant.equals(merchant) ||
+    !order.buyer.equals(buyer) ||
+    !order.mint.equals(mint) ||
+    order.amount !== amount ||
+    order.status !== "funded"
+  ) {
+    return "invalid";
+  }
+
+  const vault = await dependencies.loadTokenAccount(vaultAddress);
+  if (
+    !vault ||
+    !vault.mint.equals(mint) ||
+    !vault.owner.equals(orderAddress) ||
+    vault.amount !== amount
+  ) {
+    return "invalid";
+  }
+
+  return "valid";
 }

@@ -3,12 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST as confirmAction } from "../app/api/actions/product/[id]/confirm/route";
 import { POST as confirmOrder } from "../app/api/orders/confirm/route";
-import { verifyUsdcPayment } from "../lib/backend/solana";
+import { verifyEscrowPayment, verifyUsdcPayment } from "../lib/backend/solana";
 import { store } from "../lib/backend/store";
 import { addProduct, resetStore } from "./helpers/store-fixtures";
 
 vi.mock("@/lib/backend/solana", () => ({
   verifyUsdcPayment: vi.fn(),
+  verifyEscrowPayment: vi.fn(),
 }));
 
 const buyerWallet = "11111111111111111111111111111111";
@@ -65,6 +66,7 @@ describe("confirmation state integrity", () => {
     resetStore();
     vi.useFakeTimers();
     vi.mocked(verifyUsdcPayment).mockReset().mockResolvedValue("valid");
+    vi.mocked(verifyEscrowPayment).mockReset().mockResolvedValue("valid");
   });
 
   afterEach(() => {
@@ -73,7 +75,7 @@ describe("confirmation state integrity", () => {
 
   it("keeps a pending signature unbound in the generic confirmation route", async () => {
     const order = reserveOrder();
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("pending");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("pending");
 
     const response = await finishPendingVerification(
       confirmOrder(orderRequest(order.id, "nonexistent-signature")),
@@ -85,7 +87,7 @@ describe("confirmation state integrity", () => {
 
   it("keeps an invalid signature from failing the generic order", async () => {
     const order = reserveOrder();
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("invalid");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("invalid");
 
     const response = await confirmOrder(
       orderRequest(order.id, "invalid-signature"),
@@ -97,14 +99,14 @@ describe("confirmation state integrity", () => {
 
   it("accepts a legitimate signature after a malicious pending attempt", async () => {
     const order = reserveOrder();
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("pending");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("pending");
 
     await finishPendingVerification(
       confirmOrder(orderRequest(order.id, "malicious-signature")),
     );
     expectReservationIntact(order.id, order.productId);
 
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("valid");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("valid");
     const response = await confirmOrder(
       orderRequest(order.id, "real-signature"),
     );
@@ -119,14 +121,14 @@ describe("confirmation state integrity", () => {
 
   it("accepts a legitimate signature after an invalid attempt", async () => {
     const order = reserveOrder();
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("invalid");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("invalid");
 
     expect(
       (await confirmOrder(orderRequest(order.id, "invalid-signature"))).status,
     ).toBe(422);
     expectReservationIntact(order.id, order.productId);
 
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("valid");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("valid");
     const response = await confirmOrder(
       orderRequest(order.id, "real-signature"),
     );
@@ -149,7 +151,7 @@ describe("confirmation state integrity", () => {
       resolveVerification = resolve;
     });
 
-    vi.mocked(verifyUsdcPayment).mockImplementationOnce(async () => {
+    vi.mocked(verifyEscrowPayment).mockImplementationOnce(async () => {
       markVerificationStarted();
       return verificationResult;
     });
@@ -182,7 +184,7 @@ describe("confirmation state integrity", () => {
       resolveVerification = resolve;
     });
 
-    vi.mocked(verifyUsdcPayment).mockImplementationOnce(async () => {
+    vi.mocked(verifyEscrowPayment).mockImplementationOnce(async () => {
       markVerificationStarted();
       return verificationResult;
     });

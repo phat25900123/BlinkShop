@@ -50,6 +50,7 @@ vi.mock("../lib/backend/solana", () => ({
     merchantWallet: "legacy-wallet",
   }),
   verifyUsdcPayment: vi.fn(async () => "valid"),
+  verifyEscrowPayment: vi.fn(async () => "valid"),
 }));
 
 import {

@@ -2,12 +2,12 @@ import type { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { POST as confirmOrder } from "../app/api/orders/confirm/route";
-import { verifyUsdcPayment } from "../lib/backend/solana";
+import { verifyEscrowPayment } from "../lib/backend/solana";
 import { store } from "../lib/backend/store";
 import { addProduct, resetStore } from "./helpers/store-fixtures";
 
 vi.mock("@/lib/backend/solana", () => ({
-  verifyUsdcPayment: vi.fn().mockResolvedValue("valid"),
+  verifyEscrowPayment: vi.fn().mockResolvedValue("valid"),
 }));
 
 const buyerWallet = "11111111111111111111111111111111";
@@ -36,7 +36,7 @@ function confirmationRequest(orderId: string, txSignature: string) {
 describe("transaction signature protection", () => {
   beforeEach(() => {
     resetStore();
-    vi.mocked(verifyUsdcPayment).mockReset().mockResolvedValue("valid");
+    vi.mocked(verifyEscrowPayment).mockReset().mockResolvedValue("valid");
   });
 
   it("treats the same signature retried for the same order as idempotent", async () => {
@@ -53,7 +53,9 @@ describe("transaction signature protection", () => {
       order: { id: order.id, txSignature: "signature-a", status: "paid" },
     });
     expect(store.getProduct(order.productId)?.inventory).toBe(inventoryAfterPayment);
-    expect(verifyUsdcPayment).toHaveBeenCalledWith("signature-a", {
+    // The generic route now proves payment from escrow state, keyed by order id.
+    expect(verifyEscrowPayment).toHaveBeenCalledWith("signature-a", {
+      orderId: order.id,
       buyerWallet: order.buyerWallet,
       merchantWallet: order.merchantWallet,
       amountUsdc: order.amountUsdc,
