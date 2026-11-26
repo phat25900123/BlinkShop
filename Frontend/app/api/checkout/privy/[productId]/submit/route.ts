@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requirePrivyUser } from "@/lib/backend/auth";
+import { EscrowConfigurationError } from "@/lib/backend/escrow-config";
 import { getPrivyEmbeddedSolanaWallet } from "@/lib/backend/privy";
 import { SponsoredCheckoutError } from "@/lib/backend/sponsored-checkout";
 import { SolanaSponsorConfigurationError } from "@/lib/backend/solana-sponsor";
@@ -116,13 +117,26 @@ export async function POST(request: NextRequest, context: Context) {
     });
     return NextResponse.json({ txSignature: result.txSignature });
   } catch (error) {
-    if (error instanceof SolanaSponsorConfigurationError) {
+    if (
+      error instanceof SolanaSponsorConfigurationError ||
+      error instanceof EscrowConfigurationError
+    ) {
       return errorResponse(error.message, 503, error.code);
     }
     if (error instanceof SponsoredCheckoutError) {
-      return errorResponse(error.message, 503, error.code);
+      return errorResponse(
+        error.message,
+        error.code === "order_below_minimum" ? 409 : 503,
+        error.code,
+      );
     }
     if (error instanceof SponsoredSubmissionError) {
+      if (error.code === "sponsor_balance_low") {
+        // Nothing was signed or sent: fail the order so its stock returns now
+        // instead of staying reserved until expiry.
+        store.markFailed(order.id);
+        return errorResponse(error.message, 503, error.code);
+      }
       const conflictCodes = new Set([
         "order_not_pending",
         "order_expired",
@@ -130,7 +144,11 @@ export async function POST(request: NextRequest, context: Context) {
         "order_merchant_mismatch",
         "blockhash_expired",
       ]);
-      const upstreamCodes = new Set(["fee_unavailable", "broadcast_failed"]);
+      const upstreamCodes = new Set([
+        "fee_unavailable",
+        "sponsor_balance_unavailable",
+        "broadcast_failed",
+      ]);
       return errorResponse(
         error.message,
         conflictCodes.has(error.code)

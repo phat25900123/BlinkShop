@@ -37,7 +37,10 @@ vi.mock("../lib/backend/sponsored-submit", () => {
 });
 
 import { POST as submitPrivyCheckout } from "../app/api/checkout/privy/[productId]/submit/route";
-import { submitSponsoredCheckoutTransaction } from "../lib/backend/sponsored-submit";
+import {
+  SponsoredSubmissionError,
+  submitSponsoredCheckoutTransaction,
+} from "../lib/backend/sponsored-submit";
 import { store } from "../lib/backend/store";
 import { addProduct, resetStore } from "./helpers/store-fixtures";
 
@@ -191,6 +194,40 @@ describe("Privy sponsored transaction submission route", () => {
     expect((await submitPrivyCheckout(bodyWithAmount, context())).status).toBe(
       400,
     );
+  });
+
+  it("fails the order and releases stock when the sponsor balance is too low", async () => {
+    const { product, order } = createPendingOrder();
+    vi.mocked(submitSponsoredCheckoutTransaction).mockRejectedValueOnce(
+      new SponsoredSubmissionError(
+        "sponsor_balance_low",
+        "BlinkShop cannot sponsor checkouts right now.",
+      ),
+    );
+
+    const response = await submitPrivyCheckout(requestForOrder(order.id), context());
+    const body = (await response.json()) as { code?: string };
+
+    expect(response.status).toBe(503);
+    expect(body.code).toBe("sponsor_balance_low");
+    expect(store.getOrder(order.id)).toMatchObject({
+      status: "failed",
+      inventoryReserved: false,
+    });
+    expect(store.getProduct(product.id)?.inventory).toBe(5);
+  });
+
+  it("keeps the order pending when the sponsor balance cannot be read", async () => {
+    const { product, order } = createPendingOrder();
+    vi.mocked(submitSponsoredCheckoutTransaction).mockRejectedValueOnce(
+      new SponsoredSubmissionError("sponsor_balance_unavailable", "RPC down"),
+    );
+
+    const response = await submitPrivyCheckout(requestForOrder(order.id), context());
+
+    expect(response.status).toBe(502);
+    expect(store.getOrder(order.id)?.status).toBe("pending");
+    expect(store.getProduct(product.id)?.inventory).toBe(4);
   });
 
   it("does not reserve inventory again or mark Paid on replay", async () => {

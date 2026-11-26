@@ -1,20 +1,19 @@
 import "server-only";
 
 import {
-  decodeTransferCheckedInstruction,
-  TOKEN_PROGRAM_ID,
-} from "@solana/spl-token";
-import {
   Connection,
   type Keypair,
   type Message,
+  type PublicKey,
   Transaction,
+  type TransactionInstruction,
 } from "@solana/web3.js";
 
+import { getSponsorLimits } from "@/lib/backend/escrow-config";
 import {
-  getSponsoredPaymentAccounts,
+  expectedCreateOrderInstruction,
+  getSponsoredEscrowAccounts,
   getSponsoredTransactionMessageHash,
-  USDC_DECIMALS,
 } from "@/lib/backend/sponsored-checkout";
 import { getSolanaSponsorKeypair } from "@/lib/backend/solana-sponsor";
 import { store } from "@/lib/backend/store";
@@ -39,6 +38,8 @@ export type SponsoredSubmissionErrorCode =
   | "blockhash_expired"
   | "fee_unavailable"
   | "fee_too_high"
+  | "sponsor_balance_unavailable"
+  | "sponsor_balance_low"
   | "broadcast_failed";
 
 export class SponsoredSubmissionError extends Error {
@@ -55,6 +56,7 @@ export type SponsoredSubmissionDependencies = {
   getSponsorKeypair: () => Keypair;
   isBlockhashValid: (blockhash: string) => Promise<boolean>;
   getFeeForMessage: (message: Message) => Promise<number | null>;
+  getSponsorBalance: (sponsor: PublicKey) => Promise<number>;
   getCurrentOrder: (orderId: string) => Order | undefined;
   signWithSponsor: (transaction: Transaction, sponsor: Keypair) => void;
   sendRawTransaction: (transaction: Uint8Array) => Promise<string>;
@@ -73,6 +75,7 @@ function defaultDependencies(): SponsoredSubmissionDependencies {
         .value,
     getFeeForMessage: async (message) =>
       (await connection.getFeeForMessage(message, "confirmed")).value,
+    getSponsorBalance: (sponsor) => connection.getBalance(sponsor, "confirmed"),
     getCurrentOrder: (orderId) => store.getOrder(orderId),
     signWithSponsor: (transaction, sponsor) => transaction.partialSign(sponsor),
     sendRawTransaction: (transaction) =>
@@ -105,6 +108,30 @@ function decodeSignedTransaction(value: string) {
       "The signed transaction is malformed.",
     );
   }
+}
+
+/**
+ * Exact structural equality with the instruction BlinkShop computed: same
+ * program, same accounts in the same order with the same signer/writable
+ * flags, and byte-identical data (discriminator, order id, amount, windows).
+ */
+function isSameInstruction(
+  actual: TransactionInstruction,
+  expected: TransactionInstruction,
+) {
+  return (
+    actual.programId.equals(expected.programId) &&
+    actual.keys.length === expected.keys.length &&
+    actual.keys.every((key, index) => {
+      const want = expected.keys[index];
+      return (
+        key.pubkey.equals(want.pubkey) &&
+        key.isSigner === want.isSigner &&
+        key.isWritable === want.isWritable
+      );
+    }) &&
+    Buffer.from(actual.data).equals(Buffer.from(expected.data))
+  );
 }
 
 function requireOrderForBuyer(
@@ -164,10 +191,15 @@ export async function submitSponsoredCheckoutTransaction(
 
   const dependencies = injectedDependencies ?? defaultDependencies();
   const sponsor = dependencies.getSponsorKeypair();
-  const expected = await getSponsoredPaymentAccounts(
+  const expected = await getSponsoredEscrowAccounts(
+    input.order.id,
     input.authenticatedBuyerWallet,
     input.order.merchantWallet,
     input.order.amountUsdc,
+  );
+  const expectedInstruction = expectedCreateOrderInstruction(
+    expected,
+    sponsor.publicKey,
   );
   const transaction = decodeSignedTransaction(input.signedTransaction);
 
@@ -228,33 +260,14 @@ export async function submitSponsoredCheckoutTransaction(
   }
 
   const instruction = transaction.instructions[0];
-  if (!instruction.programId.equals(TOKEN_PROGRAM_ID)) {
+  if (!instruction.programId.equals(expectedInstruction.programId)) {
     throw new SponsoredSubmissionError(
       "instruction_invalid",
-      "Only the SPL Token transfer instruction can be sponsored.",
+      "Only the BlinkShop escrow create_order instruction can be sponsored.",
     );
   }
 
-  let transfer: ReturnType<typeof decodeTransferCheckedInstruction>;
-  try {
-    transfer = decodeTransferCheckedInstruction(instruction, TOKEN_PROGRAM_ID);
-  } catch {
-    throw new SponsoredSubmissionError(
-      "instruction_invalid",
-      "The sponsored instruction is not a valid TransferChecked payment.",
-    );
-  }
-
-  if (
-    transfer.keys.multiSigners.length !== 0 ||
-    !transfer.keys.owner.isSigner ||
-    !transfer.keys.source.pubkey.equals(expected.buyerTokenAccount) ||
-    !transfer.keys.mint.pubkey.equals(expected.mint) ||
-    !transfer.keys.destination.pubkey.equals(expected.merchantTokenAccount) ||
-    !transfer.keys.owner.pubkey.equals(expected.buyer) ||
-    transfer.data.amount !== expected.amount ||
-    transfer.data.decimals !== USDC_DECIMALS
-  ) {
+  if (!isSameInstruction(instruction, expectedInstruction)) {
     throw new SponsoredSubmissionError(
       "payment_mismatch",
       "The signed transaction does not match the pending order.",
@@ -312,6 +325,25 @@ export async function submitSponsoredCheckoutTransaction(
     throw new SponsoredSubmissionError(
       "transaction_message_mismatch",
       "The prepared transaction changed before sponsor signing.",
+    );
+  }
+
+  // Funding an escrow order makes the sponsor pay account rent on top of the
+  // fee. Refuse while it can still be done cleanly rather than let the
+  // transaction fail on-chain for lack of SOL.
+  let sponsorBalance: number;
+  try {
+    sponsorBalance = await dependencies.getSponsorBalance(sponsor.publicKey);
+  } catch {
+    throw new SponsoredSubmissionError(
+      "sponsor_balance_unavailable",
+      "The BlinkShop sponsor balance could not be checked.",
+    );
+  }
+  if (sponsorBalance < getSponsorLimits().sponsorMinBalanceLamports) {
+    throw new SponsoredSubmissionError(
+      "sponsor_balance_low",
+      "BlinkShop cannot sponsor checkouts right now. Please try again later.",
     );
   }
 
