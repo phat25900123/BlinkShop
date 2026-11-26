@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { store } from "@/lib/backend/store";
 import { verifyOrderPaymentWithRetry } from "@/lib/backend/order-payment";
+import { isPaidOrLater } from "@/lib/backend/types";
 
 export async function POST(request: NextRequest) {
   let body: { orderId?: unknown; txSignature?: unknown };
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
-    if (order.status === "paid") return NextResponse.json({ order, duplicate: true });
+    if (isPaidOrLater(order.status)) return NextResponse.json({ order, duplicate: true });
     const existing = store.findOrderBySignature(body.txSignature);
     if (existing && existing.id !== order.id) return NextResponse.json({ error: "Transaction signature already used" }, { status: 409 });
     // Escrow orders are proven from the escrow PDA and vault; legacy direct

@@ -27,6 +27,11 @@ type OrderRow = {
   tx_signature: string | null;
   settlement: Order["settlement"];
   sponsored: boolean;
+  shipped_at?: string | null;
+  released_at?: string | null;
+  refunded_at?: string | null;
+  escrow_action_signature?: string | null;
+  escrow_action?: Order["escrowAction"] | null;
   status: Order["status"];
   inventory_reserved: boolean;
   created_at: string;
@@ -81,6 +86,13 @@ function orderFromRow(row: OrderRow): Order {
     ...(row.tx_signature ? { txSignature: row.tx_signature } : {}),
     settlement: row.settlement === "escrow" ? "escrow" : "direct",
     sponsored: row.sponsored === true,
+    ...(row.shipped_at ? { shippedAt: row.shipped_at } : {}),
+    ...(row.released_at ? { releasedAt: row.released_at } : {}),
+    ...(row.refunded_at ? { refundedAt: row.refunded_at } : {}),
+    ...(row.escrow_action_signature
+      ? { escrowActionSignature: row.escrow_action_signature }
+      : {}),
+    ...(row.escrow_action ? { escrowAction: row.escrow_action } : {}),
     status: row.status,
     inventoryReserved: row.inventory_reserved,
     createdAt: row.created_at,
@@ -102,6 +114,11 @@ function orderToRow(order: Order): OrderRow {
     tx_signature: order.txSignature || null,
     settlement: order.settlement,
     sponsored: order.sponsored,
+    shipped_at: order.shippedAt || null,
+    released_at: order.releasedAt || null,
+    refunded_at: order.refundedAt || null,
+    escrow_action_signature: order.escrowActionSignature || null,
+    escrow_action: order.escrowAction || null,
     status: order.status,
     inventory_reserved: order.inventoryReserved,
     created_at: order.createdAt,

@@ -14,6 +14,7 @@ import {
   escrowOrderId,
   findEscrowOrderAddress,
   findEscrowVaultAddress,
+  type EscrowOrderAccount,
 } from "@/lib/backend/escrow";
 import { getEscrowConfig } from "@/lib/backend/escrow-config";
 import { usdcToBaseUnits } from "@/lib/backend/sponsor-limits";
@@ -378,4 +379,97 @@ export async function verifyEscrowPayment(
   }
 
   return "valid";
+}
+
+// ---------------------------------------------------------------------------
+// Escrow order state (lifecycle actions and status sync)
+// ---------------------------------------------------------------------------
+
+export type EscrowStateDependencies = Pick<
+  EscrowPaymentVerificationDependencies,
+  "getAccountInfo" | "loadTokenAccount"
+>;
+
+export type EscrowOrderState =
+  | { state: "missing" }
+  | { state: "invalid" }
+  | {
+      state: "ok";
+      programId: PublicKey;
+      orderAddress: PublicKey;
+      vaultAddress: PublicKey;
+      mint: PublicKey;
+      merchant: PublicKey;
+      buyer: PublicKey;
+      account: EscrowOrderAccount;
+    };
+
+function defaultEscrowStateDependencies(): EscrowStateDependencies {
+  const { getAccountInfo, loadTokenAccount } =
+    defaultEscrowVerificationDependencies();
+  return { getAccountInfo, loadTokenAccount };
+}
+
+/**
+ * Reads and authenticates an order's escrow account against the server order:
+ * owned by the configured escrow program, at the PDA derived from the server
+ * order id and merchant, with matching order id, merchant, buyer, mint and
+ * amount. The vault must hold exactly the amount while Funded/Shipped and be
+ * closed once Released/Refunded. Anything else is "invalid".
+ */
+export async function readEscrowOrderState(
+  expected: EscrowPaymentExpectation,
+  injectedDependencies?: EscrowStateDependencies,
+): Promise<EscrowOrderState> {
+  const { mint, merchant } = requirePaymentConfig(expected.merchantWallet);
+  const { programId } = getEscrowConfig();
+  const buyer = new PublicKey(expected.buyerWallet);
+  const amount = usdcToBaseUnits(expected.amountUsdc);
+  const onChainOrderId = escrowOrderId(expected.orderId);
+  const orderAddress = findEscrowOrderAddress(programId, merchant, onChainOrderId);
+  const vaultAddress = findEscrowVaultAddress(programId, orderAddress);
+  const dependencies = injectedDependencies ?? defaultEscrowStateDependencies();
+
+  const info = await dependencies.getAccountInfo(orderAddress);
+  if (!info) return { state: "missing" };
+  if (!info.owner.equals(programId)) return { state: "invalid" };
+
+  const account = decodeEscrowOrderAccount(info.data);
+  if (
+    !account ||
+    !account.orderId.equals(onChainOrderId) ||
+    !account.merchant.equals(merchant) ||
+    !account.buyer.equals(buyer) ||
+    !account.mint.equals(mint) ||
+    account.amount !== amount
+  ) {
+    return { state: "invalid" };
+  }
+
+  const vault = await dependencies.loadTokenAccount(vaultAddress);
+  const holdsFunds = account.status === "funded" || account.status === "shipped";
+  if (holdsFunds) {
+    if (
+      !vault ||
+      !vault.mint.equals(mint) ||
+      !vault.owner.equals(orderAddress) ||
+      vault.amount !== amount
+    ) {
+      return { state: "invalid" };
+    }
+  } else if (vault) {
+    // Settlement always closes the vault in the same instruction.
+    return { state: "invalid" };
+  }
+
+  return {
+    state: "ok",
+    programId,
+    orderAddress,
+    vaultAddress,
+    mint,
+    merchant,
+    buyer,
+    account,
+  };
 }

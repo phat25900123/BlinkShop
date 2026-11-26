@@ -224,3 +224,66 @@ export function decodeEscrowOrderAccount(
     bump: bytes[209],
   };
 }
+
+// ---------------------------------------------------------------------------
+// Order lifecycle instructions (no args: data is the 8-byte discriminator)
+// ---------------------------------------------------------------------------
+
+export const ESCROW_ACTIONS = ["ship", "confirm-receipt", "refund", "claim"] as const;
+export type EscrowAction = (typeof ESCROW_ACTIONS)[number];
+
+export const ESCROW_ACTION_DISCRIMINATORS: Record<EscrowAction, Buffer> = {
+  ship: Buffer.from([239, 5, 66, 105, 238, 17, 89, 97]), // mark_shipped
+  "confirm-receipt": Buffer.from([203, 36, 80, 115, 249, 12, 141, 170]),
+  refund: Buffer.from([2, 96, 183, 251, 63, 208, 46, 46]),
+  claim: Buffer.from([62, 198, 214, 193, 213, 159, 108, 210]),
+};
+
+export function isEscrowAction(value: unknown): value is EscrowAction {
+  return typeof value === "string" && (ESCROW_ACTIONS as readonly string[]).includes(value);
+}
+
+/** `mark_shipped`: accounts exactly as in `MarkShipped`. */
+export function markShippedInstruction(
+  programId: PublicKey,
+  accounts: { merchant: PublicKey; order: PublicKey },
+) {
+  return new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: accounts.merchant, isSigner: true, isWritable: false },
+      { pubkey: accounts.order, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from(ESCROW_ACTION_DISCRIMINATORS.ship),
+  });
+}
+
+export type SettleAccounts = {
+  caller: PublicKey;
+  order: PublicKey;
+  mint: PublicKey;
+  vault: PublicKey;
+  destinationToken: PublicKey;
+  rentPayer: PublicKey;
+};
+
+/** `confirm_receipt` / `refund` / `claim`: accounts exactly as in `Settle`. */
+export function settleInstruction(
+  programId: PublicKey,
+  action: Exclude<EscrowAction, "ship">,
+  accounts: SettleAccounts,
+) {
+  return new TransactionInstruction({
+    programId,
+    keys: [
+      { pubkey: accounts.caller, isSigner: true, isWritable: false },
+      { pubkey: accounts.order, isSigner: false, isWritable: true },
+      { pubkey: accounts.mint, isSigner: false, isWritable: false },
+      { pubkey: accounts.vault, isSigner: false, isWritable: true },
+      { pubkey: accounts.destinationToken, isSigner: false, isWritable: true },
+      { pubkey: accounts.rentPayer, isSigner: false, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(ESCROW_ACTION_DISCRIMINATORS[action]),
+  });
+}

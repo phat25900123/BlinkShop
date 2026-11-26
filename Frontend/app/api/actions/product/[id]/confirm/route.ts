@@ -4,6 +4,7 @@ import { actionResponse } from "@/lib/backend/cors";
 import { publicOrigin } from "@/lib/backend/app-url";
 import { store } from "@/lib/backend/store";
 import { verifyOrderPaymentWithRetry } from "@/lib/backend/order-payment";
+import { isPaidOrLater } from "@/lib/backend/types";
 
 function completedAction(
   origin: string,
@@ -69,7 +70,7 @@ if (order.status === "failed") {
     );
   }
 
-  if (order.status === "paid") {
+  if (isPaidOrLater(order.status)) {
     const product = store.getProduct(order.productId);
 
     if (!product) {
