@@ -14,6 +14,7 @@ import { SolanaSponsorConfigurationError } from "@/lib/backend/solana-sponsor";
 import {
   checkBuyerOrderLimits,
   isBelowMinimumOrder,
+  isGlobalSponsorCapReached,
 } from "@/lib/backend/sponsor-limits";
 import { store } from "@/lib/backend/store";
 
@@ -152,16 +153,26 @@ export async function POST(request: NextRequest, context: Context) {
     );
   }
 
+  const currentOrders = store.listOrders();
   const limitViolation = checkBuyerOrderLimits(
-    store.listOrders(),
+    currentOrders,
     wallet.address,
     limits,
   );
   if (limitViolation) {
     return errorResponse(limitViolation.message, 429, limitViolation.code);
   }
+  if (isGlobalSponsorCapReached(currentOrders, limits)) {
+    return errorResponse(
+      "BlinkShop has reached today's limit for sponsored checkouts. Please try again later.",
+      503,
+      "sponsor_daily_cap",
+    );
+  }
 
   const order = store.createOrder({
+    settlement: "escrow",
+    sponsored: true,
     productId: product.id,
     buyerWallet: wallet.address,
     variant: variant?.value,

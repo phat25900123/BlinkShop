@@ -10,6 +10,7 @@ import {
 } from "@solana/web3.js";
 
 import { getSponsorLimits } from "@/lib/backend/escrow-config";
+import { isBelowMinimumOrder } from "@/lib/backend/sponsor-limits";
 import {
   expectedCreateOrderInstruction,
   getSponsoredEscrowAccounts,
@@ -34,6 +35,8 @@ export type SponsoredSubmissionErrorCode =
   | "buyer_signature_invalid"
   | "instruction_invalid"
   | "payment_mismatch"
+  | "order_not_sponsored"
+  | "order_below_minimum"
   | "transaction_message_mismatch"
   | "blockhash_expired"
   | "fee_unavailable"
@@ -188,6 +191,24 @@ export async function submitSponsoredCheckoutTransaction(
     input.product,
     input.authenticatedBuyerWallet,
   );
+
+  // Only orders created by the sponsored checkout (which applied the buyer
+  // and global sponsorship limits) may make the sponsor sign.
+  if (!input.order.sponsored || input.order.settlement !== "escrow") {
+    throw new SponsoredSubmissionError(
+      "order_not_sponsored",
+      "This order was not created for sponsored checkout.",
+    );
+  }
+
+  // Re-check the sponsored minimum here: limits may have changed since the
+  // checkout, and the sponsor must never fund rent for a below-minimum order.
+  if (isBelowMinimumOrder(input.order.amountUsdc, getSponsorLimits())) {
+    throw new SponsoredSubmissionError(
+      "order_below_minimum",
+      "The order total is below the minimum BlinkShop sponsors.",
+    );
+  }
 
   const dependencies = injectedDependencies ?? defaultDependencies();
   const sponsor = dependencies.getSponsorKeypair();

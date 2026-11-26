@@ -78,6 +78,25 @@ describe("legacy JSON compatibility normalization", () => {
     );
   });
 
+  it("marks orders stored before the escrow integration as direct", () => {
+    const normalized = normalizeLegacyStore({
+      products: [legacyProduct()],
+      orders: [
+        legacyOrder(),
+        legacyOrder({ id: "legacy-sponsored", sponsoredTransactionHash: "hash" }),
+        legacyOrder({ id: "escrow-order", settlement: "escrow", sponsored: true }),
+        legacyOrder({ id: "garbage", settlement: "mainnet", sponsored: "yes" }),
+      ],
+    });
+
+    expect(normalized.orders.map((order) => [order.id, order.settlement, order.sponsored])).toEqual([
+      ["legacy-order", "direct", false],
+      ["legacy-sponsored", "direct", true],
+      ["escrow-order", "escrow", true],
+      ["garbage", "direct", false],
+    ]);
+  });
+
   it("does not rewrite non-legacy merchant ownership", () => {
     vi.stubEnv("PRIVY_MERCHANT_USER_ID", "did:privy:legacy-owner");
     const normalized = normalizeLegacyStore({

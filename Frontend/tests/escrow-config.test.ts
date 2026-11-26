@@ -78,6 +78,7 @@ describe("sponsor limit configuration", () => {
       buyerMaxPendingOrders: 3,
       buyerMaxOrdersPer24h: 30,
       sponsorMinBalanceLamports: 20_000_000,
+      globalMaxSponsoredOrdersPer24h: 200,
     });
   });
 
@@ -88,12 +89,14 @@ describe("sponsor limit configuration", () => {
         BUYER_MAX_PENDING_ORDERS: "1",
         BUYER_MAX_ORDERS_PER_24H: "10",
         SPONSOR_MIN_BALANCE_LAMPORTS: "50000000",
+        GLOBAL_MAX_SPONSORED_ORDERS_PER_24H: "5",
       }),
     ).toEqual({
       minOrderBaseUnits: BigInt(1_500_000),
       buyerMaxPendingOrders: 1,
       buyerMaxOrdersPer24h: 10,
       sponsorMinBalanceLamports: 50_000_000,
+      globalMaxSponsoredOrdersPer24h: 5,
     });
     expect(getSponsorLimits({ MIN_ORDER_USDC: "0.000001" }).minOrderBaseUnits).toBe(
       BigInt(1),
@@ -113,6 +116,7 @@ describe("sponsor limit configuration", () => {
     "BUYER_MAX_PENDING_ORDERS",
     "BUYER_MAX_ORDERS_PER_24H",
     "SPONSOR_MIN_BALANCE_LAMPORTS",
+    "GLOBAL_MAX_SPONSORED_ORDERS_PER_24H",
   ] as const)("rejects a zero, negative or fractional %s", (key) => {
     for (const value of ["0", "-1", "1.5", "x"]) {
       expect(() => getSponsorLimits({ [key]: value })).toThrowError(

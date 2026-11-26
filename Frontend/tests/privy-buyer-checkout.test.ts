@@ -40,6 +40,7 @@ import { EscrowConfigurationError } from "../lib/backend/escrow-config";
 import { SolanaSponsorConfigurationError } from "../lib/backend/solana-sponsor";
 import { store } from "../lib/backend/store";
 import { state } from "../lib/backend/store-state";
+import type { Order } from "../lib/backend/types";
 import { addProduct, resetStore } from "./helpers/store-fixtures";
 
 const buyerWallet = "11111111111111111111111111111111";
@@ -398,6 +399,8 @@ describe("Privy buyer checkout", () => {
         amountUsdc: 0.3,
         status: index % 2 ? "failed" : "cancelled",
         inventoryReserved: false,
+        settlement: "escrow",
+        sponsored: true,
         createdAt: created,
         updatedAt: created,
         expiresAt: created,
@@ -415,6 +418,79 @@ describe("Privy buyer checkout", () => {
 
     expect(response.status).toBe(429);
     expect(body.code).toBe("buyer_daily_limit");
+  });
+
+  it("marks sponsored checkouts as sponsored escrow orders", async () => {
+    addProduct();
+    expect((await createPrivyCheckout(request({}), context())).status).toBe(200);
+    expect(store.listOrders()[0]).toMatchObject({
+      settlement: "escrow",
+      sponsored: true,
+    });
+    expect(store.listOrders()[0].id).toMatch(
+      /^order-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  function seedSponsoredOrders(
+    count: number,
+    overrides: Partial<Order> = {},
+    prefix = "seed",
+  ) {
+    const now = Date.now();
+    for (let index = 0; index < count; index += 1) {
+      const created = new Date(now - (index + 1) * 60 * 1000).toISOString();
+      state.orders.set(`${prefix}-${index}`, {
+        id: `${prefix}-${index}`,
+        productId: "seed-product",
+        merchantId: "merchant-1",
+        merchantWallet: "Vote111111111111111111111111111111111111111",
+        // A different wallet each time so per-buyer limits are not involved.
+        buyerWallet: `${prefix}-wallet-${index}`,
+        quantity: 1,
+        amountUsdc: 0.3,
+        status: "failed",
+        inventoryReserved: false,
+        settlement: "escrow",
+        sponsored: true,
+        createdAt: created,
+        updatedAt: created,
+        expiresAt: created,
+        ...overrides,
+      });
+    }
+  }
+
+  it("refuses new sponsored checkouts once the global 24h cap (default 200) is reached", async () => {
+    const product = addProduct();
+    seedSponsoredOrders(199);
+    expect((await createPrivyCheckout(request({}), context())).status).toBe(200);
+
+    store.markFailed(store.listOrders().find((order) => order.status === "pending")!.id);
+    const response = await createPrivyCheckout(request({}), context());
+    const body = (await response.json()) as { code?: string };
+
+    expect(response.status).toBe(503);
+    expect(body.code).toBe("sponsor_daily_cap");
+    expect(store.getProduct(product.id)?.inventory).toBe(5);
+    expect(store.listOrders().filter((order) => order.sponsored)).toHaveLength(200);
+  });
+
+  it("honours a configured global cap and ignores orders older than 24h or not sponsored", async () => {
+    vi.stubEnv("GLOBAL_MAX_SPONSORED_ORDERS_PER_24H", "2");
+    addProduct();
+    seedSponsoredOrders(5, { sponsored: false }, "blink");
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    seedSponsoredOrders(3, { createdAt: old }, "old");
+    seedSponsoredOrders(1, {}, "recent");
+    // 1 recent sponsored order counts; the Blink and >24h orders do not.
+    expect((await createPrivyCheckout(request({}), context())).status).toBe(200);
+
+    store.markFailed(store.listOrders().find((order) => order.status === "pending")!.id);
+    const response = await createPrivyCheckout(request({}), context());
+    const body = (await response.json()) as { code?: string };
+    expect(response.status).toBe(503);
+    expect(body.code).toBe("sponsor_daily_cap");
   });
 
   it("does not count another wallet's orders against the buyer", async () => {

@@ -6,8 +6,10 @@ type LegacyProduct = Omit<Product, "merchantWallet"> & {
   merchantWallet?: unknown;
 };
 
-type LegacyOrder = Omit<Order, "merchantWallet"> & {
+type LegacyOrder = Omit<Order, "merchantWallet" | "settlement" | "sponsored"> & {
   merchantWallet?: unknown;
+  settlement?: unknown;
+  sponsored?: unknown;
 };
 
 export type PersistedStore = {
@@ -57,6 +59,10 @@ export function normalizeLegacyStore(input: {
 
     return {
       ...order,
+      // Orders stored before the escrow integration were direct transfers.
+      settlement: (order.settlement === "escrow" ? "escrow" : "direct") as Order["settlement"],
+      sponsored:
+        order.sponsored === true || Boolean(order.sponsoredTransactionHash),
       merchantId: legacyMerchantId(order.merchantId),
       merchantWallet: storedWallet(
         order.merchantWallet,

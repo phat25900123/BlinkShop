@@ -20,6 +20,27 @@ export type BuyerLimitViolation = {
   message: string;
 };
 
+const createdWithinLastDay = (order: Order, now: number) => {
+  const createdAt = Date.parse(order.createdAt);
+  return Number.isFinite(createdAt) && createdAt > now - DAY_MS;
+};
+
+/**
+ * Global ceiling on sponsored checkouts in any rolling 24 hours, across all
+ * buyers. Counts every sponsored order created in the window, whatever its
+ * status, because the reservation is what can lead to sponsor spending.
+ */
+export function isGlobalSponsorCapReached(
+  orders: readonly Order[],
+  limits: SponsorLimits,
+  now = Date.now(),
+) {
+  const sponsoredToday = orders.filter(
+    (order) => order.sponsored && createdWithinLastDay(order, now),
+  ).length;
+  return sponsoredToday >= limits.globalMaxSponsoredOrdersPer24h;
+}
+
 /**
  * Per-buyer-wallet limits on sponsored checkouts. Every order created in the
  * last 24 hours counts, whatever its status: a reservation alone does not cost
@@ -44,10 +65,9 @@ export function checkBuyerOrderLimits(
     };
   }
 
-  const recent = buyerOrders.filter((order) => {
-    const createdAt = Date.parse(order.createdAt);
-    return Number.isFinite(createdAt) && createdAt > now - DAY_MS;
-  }).length;
+  const recent = buyerOrders.filter((order) =>
+    createdWithinLastDay(order, now),
+  ).length;
   if (recent >= limits.buyerMaxOrdersPer24h) {
     return {
       code: "buyer_daily_limit",

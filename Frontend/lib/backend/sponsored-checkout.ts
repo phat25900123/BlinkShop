@@ -151,18 +151,20 @@ type SponsoredEscrowAccounts = Awaited<
 >;
 
 /**
- * The one instruction the sponsor may sign for a checkout. Used both to build
- * the transaction and to verify the buyer-signed copy, so they cannot drift.
+ * The one instruction allowed in a checkout transaction. `rentPayer` is the
+ * BlinkShop sponsor (sponsored checkout) or the buyer (Blink, buyer-funded).
+ * Used both to build the transaction and to verify the buyer-signed copy, so
+ * they cannot drift.
  */
 export function expectedCreateOrderInstruction(
   expected: SponsoredEscrowAccounts,
-  sponsor: PublicKey,
+  rentPayer: PublicKey,
 ) {
   return createEscrowOrderInstruction(
     expected.programId,
     {
       buyer: expected.buyer,
-      rentPayer: sponsor,
+      rentPayer,
       merchant: expected.merchant,
       mint: expected.mint,
       buyerToken: expected.buyerTokenAccount,
@@ -198,16 +200,16 @@ function defaultDependencies(rpcUrl: string): SponsoredCheckoutDependencies {
 }
 
 /**
- * Builds the sponsored checkout transaction: exactly one escrow
- * `create_order` instruction. The buyer signs as the USDC authority; the
- * BlinkShop sponsor is both the fee payer and the `rent_payer` for the order
- * and vault accounts, and signs last, only at submission.
+ * Shared builder: exactly one escrow `create_order` instruction whose fee
+ * payer is also its `rent_payer`. Verifies the buyer and merchant USDC ATAs
+ * first and never adds ATA creation or any other instruction.
  */
-export async function createSponsoredEscrowOrderTransaction(
+async function buildEscrowOrderTransaction(
   orderId: string,
   buyerWallet: string,
   merchantWallet: string,
   amountUsdc: number,
+  payer: (expected: SponsoredEscrowAccounts) => PublicKey,
   dependencies?: SponsoredCheckoutDependencies,
 ) {
   const expected = await getSponsoredEscrowAccounts(
@@ -224,7 +226,7 @@ export async function createSponsoredEscrowOrderTransaction(
     buyerTokenAccount,
     merchantTokenAccount,
   } = expected;
-  const sponsor = getSolanaSponsorPublicKey();
+  const feeAndRentPayer = payer(expected);
   const operations =
     dependencies ??
     defaultDependencies(
@@ -244,7 +246,7 @@ export async function createSponsoredEscrowOrderTransaction(
   ) {
     throw new SponsoredCheckoutError(
       "buyer_usdc_account_missing",
-      "Your embedded wallet does not have a USDC token account yet. Fund it with Devnet USDC first.",
+      "Your wallet does not have a USDC token account yet. Fund it with Devnet USDC first.",
     );
   }
 
@@ -265,23 +267,78 @@ export async function createSponsoredEscrowOrderTransaction(
   const transaction = new Transaction({
     blockhash: latestBlockhash.blockhash,
     lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-    feePayer: sponsor,
-  }).add(expectedCreateOrderInstruction(expected, sponsor));
+    feePayer: feeAndRentPayer,
+  }).add(expectedCreateOrderInstruction(expected, feeAndRentPayer));
 
   return {
-    serializedTransaction: transaction
-      .serialize({ requireAllSignatures: false, verifySignatures: false })
-      .toString("base64"),
-    buyerWallet: buyer.toBase58(),
-    buyerTokenAccount: buyerTokenAccount.toBase58(),
-    merchantWallet: merchant.toBase58(),
-    merchantTokenAccount: merchantTokenAccount.toBase58(),
-    usdcMint: mint.toBase58(),
-    amountBaseUnits: Number(amount),
+    transaction,
+    blockhash: latestBlockhash.blockhash,
+    summary: {
+      serializedTransaction: transaction
+        .serialize({ requireAllSignatures: false, verifySignatures: false })
+        .toString("base64"),
+      buyerWallet: buyer.toBase58(),
+      buyerTokenAccount: buyerTokenAccount.toBase58(),
+      merchantWallet: merchant.toBase58(),
+      merchantTokenAccount: merchantTokenAccount.toBase58(),
+      usdcMint: mint.toBase58(),
+      amountBaseUnits: Number(amount),
+      escrowProgramId: expected.programId.toBase58(),
+      escrowOrderAccount: expected.order.toBase58(),
+      escrowVaultAccount: expected.vault.toBase58(),
+    },
+  };
+}
+
+/**
+ * Builds the sponsored checkout transaction: exactly one escrow
+ * `create_order` instruction. The buyer signs as the USDC authority; the
+ * BlinkShop sponsor is both the fee payer and the `rent_payer` for the order
+ * and vault accounts, and signs last, only at submission.
+ */
+export async function createSponsoredEscrowOrderTransaction(
+  orderId: string,
+  buyerWallet: string,
+  merchantWallet: string,
+  amountUsdc: number,
+  dependencies?: SponsoredCheckoutDependencies,
+) {
+  const sponsor = getSolanaSponsorPublicKey();
+  const { transaction, summary } = await buildEscrowOrderTransaction(
+    orderId,
+    buyerWallet,
+    merchantWallet,
+    amountUsdc,
+    () => sponsor,
+    dependencies,
+  );
+
+  return {
+    ...summary,
     sponsorWallet: sponsor.toBase58(),
-    escrowProgramId: expected.programId.toBase58(),
-    escrowOrderAccount: expected.order.toBase58(),
-    escrowVaultAccount: expected.vault.toBase58(),
     messageHash: getSponsoredTransactionMessageHash(transaction),
   };
+}
+
+/**
+ * Blink (Solana Actions) checkout: the buyer's own wallet signs once and is
+ * the fee payer and `rent_payer`, so BlinkShop pays nothing. Still exactly
+ * one escrow `create_order` instruction.
+ */
+export async function createBuyerFundedEscrowOrderTransaction(
+  orderId: string,
+  buyerWallet: string,
+  merchantWallet: string,
+  amountUsdc: number,
+  dependencies?: SponsoredCheckoutDependencies,
+) {
+  const { blockhash, summary } = await buildEscrowOrderTransaction(
+    orderId,
+    buyerWallet,
+    merchantWallet,
+    amountUsdc,
+    (expected) => expected.buyer,
+    dependencies,
+  );
+  return { ...summary, blockhash };
 }

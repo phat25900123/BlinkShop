@@ -1,12 +1,9 @@
 import {
   Connection,
   PublicKey,
-  Transaction,
   type ParsedTransactionWithMeta,
 } from "@solana/web3.js";
 import {
-  createAssociatedTokenAccountInstruction,
-  createTransferInstruction,
   getAccount,
   getAssociatedTokenAddress,
   TokenError,
@@ -42,60 +39,6 @@ function requirePaymentConfig(merchantWallet: string) {
     mint: new PublicKey(usdcMint),
     merchant: new PublicKey(merchantWallet),
   };
-}
-
-export async function createUsdcTransferTransaction(
-  buyerWallet: string,
-  merchantWallet: string,
-  amountUsdc: number,
-) {
-  const { mint, merchant } = requirePaymentConfig(merchantWallet);
-  const buyer = new PublicKey(buyerWallet);
-  const connection = new Connection(getSolanaConfig().rpcUrl, "confirmed");
-  const [buyerTokenAccount, merchantTokenAccount, latestBlockhash] = await Promise.all([
-    getAssociatedTokenAddress(mint, buyer),
-    getAssociatedTokenAddress(mint, merchant),
-    connection.getLatestBlockhash("confirmed"),
-  ]);
-  const amount = BigInt(Math.round(amountUsdc * 1_000_000));
-  const transaction = new Transaction({ blockhash: latestBlockhash.blockhash, lastValidBlockHeight: latestBlockhash.lastValidBlockHeight, feePayer: buyer });
-const [buyerAccount, merchantAccount] = await Promise.all([
-  getAccount(connection, buyerTokenAccount).catch(() => null),
-  getAccount(connection, merchantTokenAccount).catch(() => null),
-]);
-
-// Buyer chưa có USDC ATA → tạo ATA cho buyer
-if (!buyerAccount) {
-  transaction.add(
-    createAssociatedTokenAccountInstruction(
-      buyer,              // payer
-      buyerTokenAccount,  // ATA address
-      buyer,              // owner
-      mint,
-    ),
-  );
-}
-
-// Merchant chưa có USDC ATA → tạo ATA cho merchant
-if (!merchantAccount) {
-  transaction.add(
-    createAssociatedTokenAccountInstruction(
-      buyer,                 // payer
-      merchantTokenAccount,  // ATA address
-      merchant,              // owner
-      mint,
-    ),
-  );
-}
-transaction.add(
-  createTransferInstruction(
-    buyerTokenAccount,
-    merchantTokenAccount,
-    buyer,
-    amount,
-  ),
-);
-  return { serializedTransaction: transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64"), blockhash: latestBlockhash.blockhash, merchantWallet: merchant.toBase58(), usdcMint: mint.toBase58() };
 }
 
 export type PaymentVerification = "valid" | "invalid" | "pending";
@@ -368,7 +311,9 @@ function defaultEscrowVerificationDependencies(): EscrowPaymentVerificationDepen
  *    order so it cannot be an unrelated transaction).
  * 2. The order PDA (seeds "order", merchant, sha256(order id)) is owned by the
  *    escrow program and decodes as an `Order` whose order id, merchant, buyer,
- *    mint and amount all equal the server's own record, with status Funded.
+ *    mint and amount all equal the server's own record, with status Funded
+ *    or Shipped (the merchant may ship before confirmation runs). Released and
+ *    Refunded orders no longer hold the payment and are rejected.
  * 3. The vault PDA is a token account for that mint, whose authority is the
  *    order PDA, holding exactly the order amount.
  *
@@ -417,7 +362,7 @@ export async function verifyEscrowPayment(
     !order.buyer.equals(buyer) ||
     !order.mint.equals(mint) ||
     order.amount !== amount ||
-    order.status !== "funded"
+    (order.status !== "funded" && order.status !== "shipped")
   ) {
     return "invalid";
   }

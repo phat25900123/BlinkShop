@@ -5,6 +5,7 @@ import { POST as confirmAction } from "../app/api/actions/product/[id]/confirm/r
 import { POST as confirmOrder } from "../app/api/orders/confirm/route";
 import { verifyEscrowPayment, verifyUsdcPayment } from "../lib/backend/solana";
 import { store } from "../lib/backend/store";
+import { state } from "../lib/backend/store-state";
 import { addProduct, resetStore } from "./helpers/store-fixtures";
 
 vi.mock("@/lib/backend/solana", () => ({
@@ -209,7 +210,7 @@ describe("confirmation state integrity", () => {
 
   it("does not bind a pending signature in the Solana Action route", async () => {
     const order = reserveOrder();
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("pending");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("pending");
 
     const response = await finishPendingVerification(
       confirmAction(
@@ -224,7 +225,7 @@ describe("confirmation state integrity", () => {
 
   it("does not fail or bind an invalid signature in the Solana Action route", async () => {
     const order = reserveOrder();
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("invalid");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("invalid");
 
     const response = await confirmAction(
       actionRequest(order.id, order.productId, "invalid-signature"),
@@ -237,7 +238,7 @@ describe("confirmation state integrity", () => {
 
   it("accepts a legitimate Action signature after a pending attempt", async () => {
     const order = reserveOrder();
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("pending");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("pending");
 
     await finishPendingVerification(
       confirmAction(
@@ -247,7 +248,7 @@ describe("confirmation state integrity", () => {
     );
     expectReservationIntact(order.id, order.productId);
 
-    vi.mocked(verifyUsdcPayment).mockResolvedValue("valid");
+    vi.mocked(verifyEscrowPayment).mockResolvedValue("valid");
     const response = await confirmAction(
       actionRequest(order.id, order.productId, "real-signature"),
       { params: Promise.resolve({ id: order.productId }) },
@@ -259,5 +260,45 @@ describe("confirmation state integrity", () => {
       txSignature: "real-signature",
       inventoryReserved: false,
     });
+  });
+
+  it("verifies new orders from escrow state in both confirmation routes", async () => {
+    const generic = reserveOrder();
+    expect(generic.settlement).toBe("escrow");
+    await confirmOrder(orderRequest(generic.id, "escrow-signature-a"));
+
+    const action = reserveOrder();
+    await confirmAction(
+      actionRequest(action.id, action.productId, "escrow-signature-b"),
+      { params: Promise.resolve({ id: action.productId }) },
+    );
+
+    expect(verifyEscrowPayment).toHaveBeenCalledTimes(2);
+    expect(verifyEscrowPayment).toHaveBeenCalledWith("escrow-signature-a", {
+      orderId: generic.id,
+      buyerWallet: generic.buyerWallet,
+      merchantWallet: generic.merchantWallet,
+      amountUsdc: generic.amountUsdc,
+    });
+    expect(verifyUsdcPayment).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy direct orders on transfer verification in both routes", async () => {
+    const generic = reserveOrder();
+    const action = reserveOrder();
+    for (const order of [generic, action]) {
+      state.orders.set(order.id, { ...store.getOrder(order.id)!, settlement: "direct" });
+    }
+
+    expect((await confirmOrder(orderRequest(generic.id, "direct-signature-a"))).status).toBe(200);
+    expect(
+      (await confirmAction(
+        actionRequest(action.id, action.productId, "direct-signature-b"),
+        { params: Promise.resolve({ id: action.productId }) },
+      )).status,
+    ).toBe(200);
+
+    expect(verifyUsdcPayment).toHaveBeenCalledTimes(2);
+    expect(verifyEscrowPayment).not.toHaveBeenCalled();
   });
 });

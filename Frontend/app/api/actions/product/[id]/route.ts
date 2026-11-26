@@ -7,10 +7,12 @@ import { publicOrigin } from "@/lib/backend/app-url";
 
 import { store } from "@/lib/backend/store";
 
+import { EscrowConfigurationError } from "@/lib/backend/escrow-config";
 import {
-  createUsdcTransferTransaction,
-  getSolanaConfig,
-} from "@/lib/backend/solana";
+  createBuyerFundedEscrowOrderTransaction,
+  SponsoredCheckoutError,
+} from "@/lib/backend/sponsored-checkout";
+import { getSolanaConfig } from "@/lib/backend/solana";
 
 type Context = {
   params: Promise<{
@@ -340,6 +342,11 @@ export async function POST(
 
     const order =
       store.createOrder({
+        // Blink checkouts fund the escrow from the buyer's own wallet, which
+        // pays the fee and rent; BlinkShop sponsors nothing here.
+        settlement: "escrow",
+        sponsored: false,
+
         productId:
           product.id,
 
@@ -369,7 +376,8 @@ export async function POST(
     orderId = order.id;
 
     const transaction =
-      await createUsdcTransferTransaction(
+      await createBuyerFundedEscrowOrderTransaction(
+        order.id,
         body.account,
         order.merchantWallet,
         order.amountUsdc,
@@ -385,7 +393,7 @@ export async function POST(
         transaction.serializedTransaction,
 
       message:
-        `Pay ${order.amountUsdc} USDC for ${product.name}`,
+        `Pay ${order.amountUsdc} USDC into BlinkShop escrow for ${product.name}`,
 
       orderId:
         order.id,
@@ -404,6 +412,7 @@ export async function POST(
             blockhash: transaction.blockhash,
             merchantWallet: transaction.merchantWallet,
             usdcMint: transaction.usdcMint,
+            escrowOrderAccount: transaction.escrowOrderAccount,
           }
         : {}),
     });
@@ -411,6 +420,22 @@ export async function POST(
     if (orderId) {
       store.markFailed(
         orderId,
+      );
+    }
+
+    if (error instanceof SponsoredCheckoutError) {
+      const status =
+        error.code === "buyer_usdc_account_missing" ||
+        error.code === "order_below_minimum"
+          ? 409
+          : 503;
+      return actionResponse({ message: error.message }, status);
+    }
+
+    if (error instanceof EscrowConfigurationError) {
+      return actionResponse(
+        { message: "Solana payment configuration is missing" },
+        503,
       );
     }
 

@@ -3,7 +3,7 @@ import { PublicKey } from "@solana/web3.js";
 import { actionResponse } from "@/lib/backend/cors";
 import { publicOrigin } from "@/lib/backend/app-url";
 import { store } from "@/lib/backend/store";
-import { verifyUsdcPayment } from "@/lib/backend/solana";
+import { verifyOrderPaymentWithRetry } from "@/lib/backend/order-payment";
 
 function completedAction(
   origin: string,
@@ -22,22 +22,6 @@ function completedAction(
 }
 
 type Context = { params: Promise<{ id: string }> };
-
-async function verifyWithRetry(
-  signature: string,
-  expected: {
-    buyerWallet: string;
-    merchantWallet: string;
-    amountUsdc: number;
-  },
-) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const result = await verifyUsdcPayment(signature, expected);
-    if (result !== "pending") return result;
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  return "pending" as const;
-}
 
 export async function OPTIONS() {
   return actionResponse({}, 204);
@@ -113,11 +97,9 @@ if (order.status === "failed") {
 
     const existing = store.findOrderBySignature(body.signature);
     if (existing && existing.id !== order.id) return actionResponse({ message: "Transaction signature already used" }, 409);
-    const verification = await verifyWithRetry(body.signature, {
-      buyerWallet: order.buyerWallet,
-      merchantWallet: order.merchantWallet,
-      amountUsdc: order.amountUsdc,
-    });
+    // Blink orders now fund the escrow; legacy direct orders keep transfer
+    // verification.
+    const verification = await verifyOrderPaymentWithRetry(body.signature, order);
     if (verification === "pending") {
   return actionResponse(
     {

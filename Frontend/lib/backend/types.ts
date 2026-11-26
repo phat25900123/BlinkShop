@@ -1,6 +1,13 @@
 export type ProductStatus = "active" | "inactive" | "sold_out";
 export type OrderStatus = "pending" | "paid" | "failed" | "cancelled";
 
+/**
+ * How an order's USDC moved: "escrow" funds the BlinkShop escrow program;
+ * "direct" is a legacy transfer straight to the merchant (orders created
+ * before the escrow integration). Ship/refund only apply to "escrow".
+ */
+export type OrderSettlement = "escrow" | "direct";
+
 export type ProductVariant = {
   id: string;
   name: string;
@@ -34,6 +41,9 @@ export type Order = {
   amountUsdc: number;
   sponsoredTransactionHash?: string;
   txSignature?: string;
+  settlement: OrderSettlement;
+  /** True when BlinkShop's sponsor pays the fee and rent for this order. */
+  sponsored: boolean;
   status: OrderStatus;
   inventoryReserved: boolean;
   createdAt: string;

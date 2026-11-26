@@ -143,6 +143,8 @@ export async function POST(request: NextRequest, context: Context) {
         "order_product_mismatch",
         "order_merchant_mismatch",
         "blockhash_expired",
+        "order_not_sponsored",
+        "order_below_minimum",
       ]);
       const upstreamCodes = new Set([
         "fee_unavailable",

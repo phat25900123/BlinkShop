@@ -54,6 +54,8 @@ function order(overrides: Partial<Order> = {}): Order {
     quantity: 2,
     amountUsdc: 0.6,
     status: "pending",
+    settlement: "escrow",
+    sponsored: true,
     inventoryReserved: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -661,6 +663,17 @@ describe("BlinkShop server-side sponsored submission", () => {
     await expect(submit(await signedTransaction(), deps)).rejects.toMatchObject({
       code: "sponsor_balance_unavailable",
     });
+    expect(deps.signWithSponsor).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a non-sponsored (Blink) order", { sponsored: false }],
+    ["a legacy direct order", { settlement: "direct" as const }],
+  ])("refuses to sponsor %s", async (_label, override) => {
+    const deps = dependencies();
+    await expect(
+      submit(await signedTransaction(), deps, order(override)),
+    ).rejects.toMatchObject({ code: "order_not_sponsored" });
     expect(deps.signWithSponsor).not.toHaveBeenCalled();
   });
 

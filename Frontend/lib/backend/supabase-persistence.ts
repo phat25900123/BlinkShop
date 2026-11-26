@@ -25,6 +25,8 @@ type OrderRow = {
   quantity: number;
   amount_usdc: number | string;
   tx_signature: string | null;
+  settlement: Order["settlement"];
+  sponsored: boolean;
   status: Order["status"];
   inventory_reserved: boolean;
   created_at: string;
@@ -77,6 +79,8 @@ function orderFromRow(row: OrderRow): Order {
     quantity: row.quantity,
     amountUsdc: Number(row.amount_usdc),
     ...(row.tx_signature ? { txSignature: row.tx_signature } : {}),
+    settlement: row.settlement === "escrow" ? "escrow" : "direct",
+    sponsored: row.sponsored === true,
     status: row.status,
     inventoryReserved: row.inventory_reserved,
     createdAt: row.created_at,
@@ -96,6 +100,8 @@ function orderToRow(order: Order): OrderRow {
     quantity: order.quantity,
     amount_usdc: order.amountUsdc,
     tx_signature: order.txSignature || null,
+    settlement: order.settlement,
+    sponsored: order.sponsored,
     status: order.status,
     inventory_reserved: order.inventoryReserved,
     created_at: order.createdAt,

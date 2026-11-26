@@ -141,12 +141,14 @@ export const DEFAULT_MIN_ORDER_USDC = 0.01;
 export const DEFAULT_BUYER_MAX_PENDING_ORDERS = 3;
 export const DEFAULT_BUYER_MAX_ORDERS_PER_24H = 30;
 export const DEFAULT_SPONSOR_MIN_BALANCE_LAMPORTS = 20_000_000; // 0.02 SOL
+export const DEFAULT_GLOBAL_MAX_SPONSORED_ORDERS_PER_24H = 200;
 
 export type SponsorLimitsEnvironment = {
   MIN_ORDER_USDC?: string;
   BUYER_MAX_PENDING_ORDERS?: string;
   BUYER_MAX_ORDERS_PER_24H?: string;
   SPONSOR_MIN_BALANCE_LAMPORTS?: string;
+  GLOBAL_MAX_SPONSORED_ORDERS_PER_24H?: string;
 };
 
 export type SponsorLimits = {
@@ -155,6 +157,8 @@ export type SponsorLimits = {
   buyerMaxPendingOrders: number;
   buyerMaxOrdersPer24h: number;
   sponsorMinBalanceLamports: number;
+  /** Sponsored checkouts across all buyers in any rolling 24 hours. */
+  globalMaxSponsoredOrdersPer24h: number;
 };
 
 function parsePositiveInteger(
@@ -206,6 +210,8 @@ export function getSponsorLimits(
     BUYER_MAX_PENDING_ORDERS: process.env.BUYER_MAX_PENDING_ORDERS,
     BUYER_MAX_ORDERS_PER_24H: process.env.BUYER_MAX_ORDERS_PER_24H,
     SPONSOR_MIN_BALANCE_LAMPORTS: process.env.SPONSOR_MIN_BALANCE_LAMPORTS,
+    GLOBAL_MAX_SPONSORED_ORDERS_PER_24H:
+      process.env.GLOBAL_MAX_SPONSORED_ORDERS_PER_24H,
   },
 ): SponsorLimits {
   return {
@@ -224,6 +230,11 @@ export function getSponsorLimits(
       environment.SPONSOR_MIN_BALANCE_LAMPORTS,
       DEFAULT_SPONSOR_MIN_BALANCE_LAMPORTS,
       "SPONSOR_MIN_BALANCE_LAMPORTS",
+    ),
+    globalMaxSponsoredOrdersPer24h: parsePositiveInteger(
+      environment.GLOBAL_MAX_SPONSORED_ORDERS_PER_24H,
+      DEFAULT_GLOBAL_MAX_SPONSORED_ORDERS_PER_24H,
+      "GLOBAL_MAX_SPONSORED_ORDERS_PER_24H",
     ),
   };
 }

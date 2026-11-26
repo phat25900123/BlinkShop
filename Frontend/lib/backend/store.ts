@@ -419,7 +419,13 @@ export const store = {
       | "sponsoredTransactionHash"
       | "merchantId"
       | "merchantWallet"
-    >,
+      | "settlement"
+      | "sponsored"
+    > & {
+      // New orders fund the escrow unless a caller says otherwise.
+      settlement?: Order["settlement"];
+      sponsored?: boolean;
+    },
   ) {
     const product =
       products.get(
@@ -506,13 +512,16 @@ export const store = {
     const order: Order = {
       ...input,
 
+      settlement: input.settlement ?? "escrow",
+      sponsored: input.sponsored ?? false,
+
       merchantId: product.merchantId,
       merchantWallet: product.merchantWallet,
 
-      id: `order-${randomUUID().slice(
-        0,
-        8,
-      )}`,
+      // Full 128-bit UUID: the escrow PDA is seeded by sha256(order id) per
+      // merchant, so a collision would make the second order unpayable.
+      // Older 8-hex-character ids remain valid; ids are never parsed.
+      id: `order-${randomUUID()}`,
 
       status: "pending",
 

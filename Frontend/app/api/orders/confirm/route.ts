@@ -1,23 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { store } from "@/lib/backend/store";
-import {
-  verifyEscrowPayment,
-  type EscrowPaymentExpectation,
-} from "@/lib/backend/solana";
-
-// Orders paid through the sponsored checkout fund the on-chain escrow, so
-// payment is proven by the order PDA and vault state, not a direct transfer.
-async function verifyWithRetry(
-  signature: string,
-  expected: EscrowPaymentExpectation,
-) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const result = await verifyEscrowPayment(signature, expected);
-    if (result !== "pending") return result;
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  return "pending" as const;
-}
+import { verifyOrderPaymentWithRetry } from "@/lib/backend/order-payment";
 
 export async function POST(request: NextRequest) {
   let body: { orderId?: unknown; txSignature?: unknown };
@@ -64,12 +47,9 @@ export async function POST(request: NextRequest) {
     if (order.status === "paid") return NextResponse.json({ order, duplicate: true });
     const existing = store.findOrderBySignature(body.txSignature);
     if (existing && existing.id !== order.id) return NextResponse.json({ error: "Transaction signature already used" }, { status: 409 });
-    const verification = await verifyWithRetry(body.txSignature, {
-      orderId: order.id,
-      buyerWallet: order.buyerWallet,
-      merchantWallet: order.merchantWallet,
-      amountUsdc: order.amountUsdc,
-    });
+    // Escrow orders are proven from the escrow PDA and vault; legacy direct
+    // orders keep transfer verification.
+    const verification = await verifyOrderPaymentWithRetry(body.txSignature, order);
     if (verification === "pending") return NextResponse.json({ message: "Payment is still being confirmed", order: store.getOrder(order.id) }, { status: 202 });
     if (verification === "invalid") return NextResponse.json({ error: "Payment could not be verified", order: store.getOrder(order.id) }, { status: 422 });
 

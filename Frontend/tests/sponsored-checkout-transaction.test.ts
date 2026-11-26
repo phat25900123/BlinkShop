@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { decodeCreateOrderData } from "../lib/backend/escrow";
 import {
+  createBuyerFundedEscrowOrderTransaction,
   createSponsoredEscrowOrderTransaction,
   SponsoredCheckoutError,
   type SponsoredCheckoutDependencies,
@@ -245,6 +246,55 @@ describe("sponsored Privy transaction construction", () => {
     expect(result.merchantTokenAccount).toBe(
       (await getAssociatedTokenAddress(mint, merchantB)).toBase58(),
     );
+  });
+
+  it("builds a buyer-funded Blink create_order: buyer is fee payer, rent_payer and sole signer", async () => {
+    const result = await createBuyerFundedEscrowOrderTransaction(
+      "order-1",
+      buyer.toBase58(),
+      merchant.toBase58(),
+      0.6,
+      await dependencies("both"),
+    );
+    const transaction = Transaction.from(
+      Buffer.from(result.serializedTransaction, "base64"),
+    );
+
+    expect(transaction.instructions).toHaveLength(1);
+    const instruction = transaction.instructions[0];
+    expect(instruction.programId.equals(escrowProgramId)).toBe(true);
+    expect(instruction.keys[0].pubkey.equals(buyer)).toBe(true);
+    expect(instruction.keys[1].pubkey.equals(buyer)).toBe(true);
+    expect(instruction.keys.some((key) => key.pubkey.equals(sponsor.publicKey))).toBe(false);
+    expect(transaction.feePayer?.equals(buyer)).toBe(true);
+    expect(transaction.signatures.map((entry) => entry.publicKey.toBase58())).toEqual([
+      buyer.toBase58(),
+    ]);
+    expect(decodeCreateOrderData(instruction.data)?.amount).toBe(BigInt(600_000));
+    expect(result.escrowOrderAccount).toBe(orderPda(merchant, "order-1").toBase58());
+    expect(result.blockhash).toBe("11111111111111111111111111111111");
+    expect(result).not.toHaveProperty("sponsorWallet");
+  });
+
+  it("does not add ATA creation to the Blink transaction when an ATA is missing", async () => {
+    await expect(
+      createBuyerFundedEscrowOrderTransaction(
+        "order-1",
+        buyer.toBase58(),
+        merchant.toBase58(),
+        0.3,
+        await dependencies("buyer-only"),
+      ),
+    ).rejects.toMatchObject({ code: "merchant_usdc_account_missing" });
+    await expect(
+      createBuyerFundedEscrowOrderTransaction(
+        "order-1",
+        buyer.toBase58(),
+        merchant.toBase58(),
+        0.3,
+        await dependencies("none"),
+      ),
+    ).rejects.toMatchObject({ code: "buyer_usdc_account_missing" });
   });
 
   it("rejects a missing product-owned merchant payout wallet", async () => {

@@ -141,6 +141,33 @@ describe("escrow payment verification from on-chain state", () => {
     expect(vi.mocked(deps.loadTokenAccount).mock.calls[0][0].equals(VAULT)).toBe(true);
   });
 
+  it("also accepts a Shipped order while the vault still holds the amount", async () => {
+    expect(
+      await verify(
+        dependencies({
+          getAccountInfo: vi.fn(async () => ({
+            owner: programId,
+            data: orderAccountData({ status: 1 }),
+          })),
+        }),
+      ),
+    ).toBe("valid");
+  });
+
+  it("rejects a Shipped order whose vault no longer holds the amount", async () => {
+    expect(
+      await verify(
+        dependencies({
+          getAccountInfo: vi.fn(async () => ({
+            owner: programId,
+            data: orderAccountData({ status: 1 }),
+          })),
+          loadTokenAccount: vi.fn(async () => ({ mint, owner: ORDER, amount: BigInt(1) })),
+        }),
+      ),
+    ).toBe("invalid");
+  });
+
   it("does not depend on token balance deltas", async () => {
     // parsedTransaction() carries no pre/post token balances at all.
     expect(await verify()).toBe("valid");
@@ -214,7 +241,6 @@ describe("escrow payment verification from on-chain state", () => {
       ["mint", { mint: otherMint }],
       ["amount (underpaid)", { amount: BigInt(599_999) }],
       ["amount (overpaid)", { amount: BigInt(600_001) }],
-      ["status Shipped", { status: 1 }],
       ["status Released", { status: 2 }],
       ["status Refunded", { status: 3 }],
       ["unknown status", { status: 9 }],
