@@ -1981,3 +1981,9 @@ body {
 .escrow-actions button:disabled { cursor: progress; opacity: .6; }
 .escrow-action-error { margin: 0; color: #a65e50; font-size: 11px; line-height: 1.4; }
 .stat-foot b { color: #43443f; font-weight: 700; }
+.order-tracker-card { grid-template-columns: 1fr; max-width: 520px; }
+.blink-fallback-content .order-tracker-title, .order-tracker-title { margin: 8px 0 12px; font-size: 26px; letter-spacing: -1px; line-height: 1.1; }
+.order-countdown { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 14px 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; color: #74786f; font-size: 12px; }
+.order-countdown strong { color: #2f312c; font-size: 16px; font-variant-numeric: tabular-nums; }
+.order-note { margin: 14px 0; padding: 12px 14px; border-radius: 8px; background: var(--warning-bg); color: #6f5a2f; font-size: 12px; line-height: 1.5; }
+.blink-checkout .order-note { margin-top: 16px; text-align: left; }
