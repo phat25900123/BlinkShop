@@ -1,1 +1,19 @@
 *.zip
+
+# Secrets and local environment (example files stay tracked)
+.env
+.env.*
+!.env.example
+*keypair*.json
+id.json
+*.pem
+
+# Local app data (written by the dev server; demo data is seeded when absent)
+Frontend/data/store.json
+
+# Dependencies and build output
+node_modules/
+.next/
+target/
+.anchor/
+test-ledger/
