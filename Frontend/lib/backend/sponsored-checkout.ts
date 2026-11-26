@@ -3,7 +3,6 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import {
-  createTransferCheckedInstruction,
   getAccount,
   getAssociatedTokenAddress,
   TokenAccountNotFoundError,
@@ -15,9 +14,20 @@ import {
   type BlockhashWithExpiryBlockHeight,
 } from "@solana/web3.js";
 
+import {
+  createEscrowOrderInstruction,
+  escrowOrderId,
+  findEscrowOrderAddress,
+  findEscrowVaultAddress,
+} from "@/lib/backend/escrow";
+import { getEscrowConfig, getSponsorLimits } from "@/lib/backend/escrow-config";
 import { getSolanaSponsorPublicKey } from "@/lib/backend/solana-sponsor";
+import {
+  isBelowMinimumOrder,
+  usdcToBaseUnits,
+} from "@/lib/backend/sponsor-limits";
 
-export const USDC_DECIMALS = 6;
+export { USDC_DECIMALS } from "@/lib/backend/sponsor-limits";
 
 export function getSponsoredTransactionMessageHash(transaction: Transaction) {
   return createHash("sha256")
@@ -40,7 +50,8 @@ export type SponsoredCheckoutDependencies = {
 export type SponsoredCheckoutErrorCode =
   | "configuration_missing"
   | "buyer_usdc_account_missing"
-  | "merchant_usdc_account_missing";
+  | "merchant_usdc_account_missing"
+  | "order_below_minimum";
 
 export class SponsoredCheckoutError extends Error {
   constructor(
@@ -77,7 +88,7 @@ export async function getSponsoredPaymentAccounts(
     "merchantWallet",
   );
   const buyer = new PublicKey(buyerWallet);
-  const amount = BigInt(Math.round(amountUsdc * 10 ** USDC_DECIMALS));
+  const amount = usdcToBaseUnits(amountUsdc);
 
   if (amount <= BigInt(0) || !Number.isSafeInteger(Number(amount))) {
     throw new Error("Invalid USDC payment amount");
@@ -91,6 +102,80 @@ export async function getSponsoredPaymentAccounts(
     buyerTokenAccount: await getAssociatedTokenAddress(mint, buyer),
     merchantTokenAccount: await getAssociatedTokenAddress(mint, merchant),
   };
+}
+
+/**
+ * Every value the escrow `create_order` instruction needs, derived only from
+ * server-owned inputs: the BlinkShop order id, the authenticated buyer wallet,
+ * the product's payout wallet, the order amount and server configuration.
+ */
+export async function getSponsoredEscrowAccounts(
+  orderId: string,
+  buyerWallet: string,
+  merchantWallet: string,
+  amountUsdc: number,
+) {
+  if (isBelowMinimumOrder(amountUsdc, getSponsorLimits())) {
+    throw new SponsoredCheckoutError(
+      "order_below_minimum",
+      "The order total is below the minimum BlinkShop sponsors.",
+    );
+  }
+
+  const payment = await getSponsoredPaymentAccounts(
+    buyerWallet,
+    merchantWallet,
+    amountUsdc,
+  );
+  const config = getEscrowConfig();
+  const onChainOrderId = escrowOrderId(orderId);
+  const order = findEscrowOrderAddress(
+    config.programId,
+    payment.merchant,
+    onChainOrderId,
+  );
+
+  return {
+    ...payment,
+    programId: config.programId,
+    shipWindowSeconds: config.shipWindowSeconds,
+    protectionWindowSeconds: config.protectionWindowSeconds,
+    escrowOrderId: onChainOrderId,
+    order,
+    vault: findEscrowVaultAddress(config.programId, order),
+  };
+}
+
+type SponsoredEscrowAccounts = Awaited<
+  ReturnType<typeof getSponsoredEscrowAccounts>
+>;
+
+/**
+ * The one instruction the sponsor may sign for a checkout. Used both to build
+ * the transaction and to verify the buyer-signed copy, so they cannot drift.
+ */
+export function expectedCreateOrderInstruction(
+  expected: SponsoredEscrowAccounts,
+  sponsor: PublicKey,
+) {
+  return createEscrowOrderInstruction(
+    expected.programId,
+    {
+      buyer: expected.buyer,
+      rentPayer: sponsor,
+      merchant: expected.merchant,
+      mint: expected.mint,
+      buyerToken: expected.buyerTokenAccount,
+      order: expected.order,
+      vault: expected.vault,
+    },
+    {
+      orderId: expected.escrowOrderId,
+      amount: expected.amount,
+      shipWindowSeconds: expected.shipWindowSeconds,
+      protectionWindowSeconds: expected.protectionWindowSeconds,
+    },
+  );
 }
 
 function defaultDependencies(rpcUrl: string): SponsoredCheckoutDependencies {
@@ -112,12 +197,25 @@ function defaultDependencies(rpcUrl: string): SponsoredCheckoutDependencies {
   };
 }
 
-export async function createSponsoredUsdcTransferTransaction(
+/**
+ * Builds the sponsored checkout transaction: exactly one escrow
+ * `create_order` instruction. The buyer signs as the USDC authority; the
+ * BlinkShop sponsor is both the fee payer and the `rent_payer` for the order
+ * and vault accounts, and signs last, only at submission.
+ */
+export async function createSponsoredEscrowOrderTransaction(
+  orderId: string,
   buyerWallet: string,
   merchantWallet: string,
   amountUsdc: number,
   dependencies?: SponsoredCheckoutDependencies,
 ) {
+  const expected = await getSponsoredEscrowAccounts(
+    orderId,
+    buyerWallet,
+    merchantWallet,
+    amountUsdc,
+  );
   const {
     mint,
     merchant,
@@ -125,11 +223,7 @@ export async function createSponsoredUsdcTransferTransaction(
     amount,
     buyerTokenAccount,
     merchantTokenAccount,
-  } = await getSponsoredPaymentAccounts(
-    buyerWallet,
-    merchantWallet,
-    amountUsdc,
-  );
+  } = expected;
   const sponsor = getSolanaSponsorPublicKey();
   const operations =
     dependencies ??
@@ -154,6 +248,9 @@ export async function createSponsoredUsdcTransferTransaction(
     );
   }
 
+  // The escrow never touches the merchant ATA at funding time, but release
+  // pays into it later; refusing here avoids escrowing funds for a merchant
+  // that cannot be paid out.
   if (
     !merchantAccount ||
     !merchantAccount.mint.equals(mint) ||
@@ -169,16 +266,7 @@ export async function createSponsoredUsdcTransferTransaction(
     blockhash: latestBlockhash.blockhash,
     lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
     feePayer: sponsor,
-  }).add(
-    createTransferCheckedInstruction(
-      buyerTokenAccount,
-      mint,
-      merchantTokenAccount,
-      buyer,
-      amount,
-      USDC_DECIMALS,
-    ),
-  );
+  }).add(expectedCreateOrderInstruction(expected, sponsor));
 
   return {
     serializedTransaction: transaction
@@ -191,6 +279,9 @@ export async function createSponsoredUsdcTransferTransaction(
     usdcMint: mint.toBase58(),
     amountBaseUnits: Number(amount),
     sponsorWallet: sponsor.toBase58(),
+    escrowProgramId: expected.programId.toBase58(),
+    escrowOrderAccount: expected.order.toBase58(),
+    escrowVaultAccount: expected.vault.toBase58(),
     messageHash: getSponsoredTransactionMessageHash(transaction),
   };
 }

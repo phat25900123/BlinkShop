@@ -26,18 +26,20 @@ vi.mock("../lib/backend/sponsored-checkout", () => {
 
   return {
     SponsoredCheckoutError,
-    createSponsoredUsdcTransferTransaction: vi.fn(),
+    createSponsoredEscrowOrderTransaction: vi.fn(),
   };
 });
 
 import { POST as createPrivyCheckout } from "../app/api/checkout/privy/[productId]/route";
 import { getPrivyEmbeddedSolanaWallet } from "../lib/backend/privy";
 import {
-  createSponsoredUsdcTransferTransaction,
+  createSponsoredEscrowOrderTransaction,
   SponsoredCheckoutError,
 } from "../lib/backend/sponsored-checkout";
+import { EscrowConfigurationError } from "../lib/backend/escrow-config";
 import { SolanaSponsorConfigurationError } from "../lib/backend/solana-sponsor";
 import { store } from "../lib/backend/store";
+import { state } from "../lib/backend/store-state";
 import { addProduct, resetStore } from "./helpers/store-fixtures";
 
 const buyerWallet = "11111111111111111111111111111111";
@@ -69,7 +71,7 @@ describe("Privy buyer checkout", () => {
       address: buyerWallet,
       walletId: "wallet-buyer",
     });
-    vi.mocked(createSponsoredUsdcTransferTransaction).mockResolvedValue({
+    vi.mocked(createSponsoredEscrowOrderTransaction).mockResolvedValue({
       serializedTransaction: "base64-sponsored-transaction",
       buyerWallet,
       buyerTokenAccount: "buyer-token-account",
@@ -78,6 +80,9 @@ describe("Privy buyer checkout", () => {
       usdcMint: "usdc-mint",
       amountBaseUnits: 300_000,
       sponsorWallet: "sponsor-wallet",
+      escrowProgramId: "escrow-program",
+      escrowOrderAccount: "escrow-order",
+      escrowVaultAccount: "escrow-vault",
       messageHash: "server-prepared-message-hash",
     });
   });
@@ -164,7 +169,9 @@ describe("Privy buyer checkout", () => {
     expect(order.sponsoredTransactionHash).toBe(
       "server-prepared-message-hash",
     );
-    expect(createSponsoredUsdcTransferTransaction).toHaveBeenCalledWith(
+    // The escrow order id is derived from the server-created order id.
+    expect(createSponsoredEscrowOrderTransaction).toHaveBeenCalledWith(
+      order.id,
       buyerWallet,
       product.merchantWallet,
       0.6,
@@ -184,7 +191,8 @@ describe("Privy buyer checkout", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(createSponsoredUsdcTransferTransaction).toHaveBeenCalledWith(
+    expect(createSponsoredEscrowOrderTransaction).toHaveBeenCalledWith(
+      store.listOrders()[0].id,
       buyerWallet,
       merchantBWallet,
       product.priceUsdc,
@@ -244,7 +252,7 @@ describe("Privy buyer checkout", () => {
 
   it("releases reserved stock after a missing buyer USDC ATA", async () => {
     const product = addProduct();
-    vi.mocked(createSponsoredUsdcTransferTransaction).mockRejectedValueOnce(
+    vi.mocked(createSponsoredEscrowOrderTransaction).mockRejectedValueOnce(
       new SponsoredCheckoutError(
         "buyer_usdc_account_missing",
         "Your embedded wallet does not have a USDC token account yet.",
@@ -262,7 +270,7 @@ describe("Privy buyer checkout", () => {
 
   it("releases reserved stock after a missing merchant USDC ATA", async () => {
     const product = addProduct();
-    vi.mocked(createSponsoredUsdcTransferTransaction).mockRejectedValueOnce(
+    vi.mocked(createSponsoredEscrowOrderTransaction).mockRejectedValueOnce(
       new SponsoredCheckoutError(
         "merchant_usdc_account_missing",
         "The merchant Devnet USDC token account is not configured.",
@@ -280,7 +288,7 @@ describe("Privy buyer checkout", () => {
 
   it("returns a controlled 503 and releases stock when sponsor config is missing", async () => {
     const product = addProduct();
-    vi.mocked(createSponsoredUsdcTransferTransaction).mockRejectedValueOnce(
+    vi.mocked(createSponsoredEscrowOrderTransaction).mockRejectedValueOnce(
       new SolanaSponsorConfigurationError(
         "sponsor_secret_missing",
         "The BlinkShop Devnet sponsor wallet is not configured.",
@@ -294,6 +302,132 @@ describe("Privy buyer checkout", () => {
     expect(body.code).toBe("sponsor_secret_missing");
     expect(store.getProduct(product.id)?.inventory).toBe(5);
     expect(store.listOrders()[0].status).toBe("failed");
+  });
+
+  it("returns a controlled 503 and releases stock when the escrow program is not configured", async () => {
+    const product = addProduct();
+    vi.mocked(createSponsoredEscrowOrderTransaction).mockRejectedValueOnce(
+      new EscrowConfigurationError(
+        "escrow_program_missing",
+        "ESCROW_PROGRAM_ID is not configured.",
+      ),
+    );
+
+    const response = await createPrivyCheckout(request({ quantity: 2 }), context());
+    const body = (await response.json()) as { code?: string };
+
+    expect(response.status).toBe(503);
+    expect(body.code).toBe("escrow_program_missing");
+    expect(store.getProduct(product.id)?.inventory).toBe(5);
+    expect(store.listOrders()[0].status).toBe("failed");
+  });
+
+  it("rejects an order below MIN_ORDER_USDC without reserving stock", async () => {
+    const product = addProduct({ priceUsdc: 0.009 });
+    const response = await createPrivyCheckout(request({}), context());
+    const body = (await response.json()) as { code?: string };
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe("order_below_minimum");
+    expect(store.getProduct(product.id)?.inventory).toBe(5);
+    expect(store.listOrders()).toHaveLength(0);
+    expect(createSponsoredEscrowOrderTransaction).not.toHaveBeenCalled();
+  });
+
+  it("accepts an order exactly at the minimum and honours a configured minimum", async () => {
+    addProduct({ priceUsdc: 0.01 });
+    expect((await createPrivyCheckout(request({}), context())).status).toBe(200);
+
+    resetStore();
+    vi.stubEnv("MIN_ORDER_USDC", "1");
+    addProduct({ priceUsdc: 0.5 });
+    const below = await createPrivyCheckout(request({ quantity: 1 }), context());
+    expect(below.status).toBe(409);
+    const atMinimum = await createPrivyCheckout(request({ quantity: 2 }), context());
+    expect(atMinimum.status).toBe(200);
+  });
+
+  it("limits a buyer wallet to 3 pending checkouts across products", async () => {
+    for (const id of ["p1", "p2", "p3", "p4"]) addProduct({ id });
+    for (const id of ["p1", "p2", "p3"]) {
+      expect((await createPrivyCheckout(request({}), context(id))).status).toBe(200);
+    }
+
+    const response = await createPrivyCheckout(request({}), context("p4"));
+    const body = (await response.json()) as { code?: string };
+
+    expect(response.status).toBe(429);
+    expect(body.code).toBe("buyer_pending_limit");
+    expect(store.getProduct("p4")?.inventory).toBe(5);
+    expect(store.listOrders()).toHaveLength(3);
+  });
+
+  it("frees a pending slot once a checkout fails", async () => {
+    for (const id of ["p1", "p2", "p3", "p4"]) addProduct({ id });
+    for (const id of ["p1", "p2", "p3"]) {
+      await createPrivyCheckout(request({}), context(id));
+    }
+    store.markFailed(store.listOrders()[0].id);
+
+    expect((await createPrivyCheckout(request({}), context("p4"))).status).toBe(200);
+  });
+
+  it("honours a configured pending limit", async () => {
+    vi.stubEnv("BUYER_MAX_PENDING_ORDERS", "1");
+    for (const id of ["p1", "p2"]) addProduct({ id });
+    expect((await createPrivyCheckout(request({}), context("p1"))).status).toBe(200);
+    const response = await createPrivyCheckout(request({}), context("p2"));
+    expect(response.status).toBe(429);
+  });
+
+  it("limits a buyer wallet to 30 checkouts per 24 hours, counting every status", async () => {
+    addProduct({ inventory: 100 });
+    const now = Date.now();
+    // 29 orders in the last 24h in mixed terminal states, plus one older than 24h.
+    for (let index = 0; index < 30; index += 1) {
+      const created = new Date(
+        index === 0 ? now - 25 * 60 * 60 * 1000 : now - index * 60 * 1000,
+      ).toISOString();
+      state.orders.set(`old-${index}`, {
+        id: `old-${index}`,
+        productId: "product-1",
+        merchantId: "merchant-1",
+        merchantWallet: "Vote111111111111111111111111111111111111111",
+        buyerWallet,
+        quantity: 1,
+        amountUsdc: 0.3,
+        status: index % 2 ? "failed" : "cancelled",
+        inventoryReserved: false,
+        createdAt: created,
+        updatedAt: created,
+        expiresAt: created,
+      });
+    }
+
+    // 29 recent orders: one more is allowed (the 30th in 24h)...
+    expect((await createPrivyCheckout(request({}), context())).status).toBe(200);
+    // ...and the 31st is refused.
+    store.markFailed(
+      store.listOrders().find((order) => order.status === "pending")!.id,
+    );
+    const response = await createPrivyCheckout(request({}), context());
+    const body = (await response.json()) as { code?: string };
+
+    expect(response.status).toBe(429);
+    expect(body.code).toBe("buyer_daily_limit");
+  });
+
+  it("does not count another wallet's orders against the buyer", async () => {
+    vi.stubEnv("BUYER_MAX_PENDING_ORDERS", "1");
+    for (const id of ["p1", "p2"]) addProduct({ id });
+    store.createOrder({
+      productId: "p1",
+      buyerWallet: spoofedWallet,
+      quantity: 1,
+      amountUsdc: 0.3,
+    });
+
+    expect((await createPrivyCheckout(request({}), context("p2"))).status).toBe(200);
   });
 
   it("limits a wallet to one pending reservation per product", async () => {
