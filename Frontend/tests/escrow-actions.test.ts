@@ -568,6 +568,24 @@ describe("escrow order lifecycle", () => {
       expect(order.escrowAction).toBeUndefined();
     });
 
+    it("returns the on-chain deadlines for countdowns", async () => {
+      seedOrder({ status: "paid" });
+      chain = freshChain({ status: "shipped", releaseAfter: NOW_SECONDS + 7200 });
+      const result = await syncEscrowOrderStatus(store.getOrder(ORDER_ID)!, dependencies());
+      expect(result.escrow).toEqual({
+        status: "shipped",
+        shipBy: new Date((NOW_SECONDS + 3600) * 1000).toISOString(),
+        releaseAfter: new Date((NOW_SECONDS + 7200) * 1000).toISOString(),
+      });
+
+      // Before mark_shipped the program stores release_after = 0.
+      seedOrder({ status: "paid" });
+      chain = freshChain({ status: "funded" });
+      const funded = await syncEscrowOrderStatus(store.getOrder(ORDER_ID)!, dependencies());
+      expect(funded.result).toBe("unchanged");
+      expect(funded.escrow?.releaseAfter).toBeNull();
+    });
+
     it("never moves backwards on a stale read", async () => {
       seedOrder({ status: "shipped" });
       chain = freshChain({ status: "funded" });

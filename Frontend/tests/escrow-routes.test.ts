@@ -44,7 +44,7 @@ vi.mock("../lib/backend/escrow-actions", () => {
 
 import { POST as prepare } from "../app/api/orders/[id]/escrow/[action]/route";
 import { POST as submit } from "../app/api/orders/[id]/escrow/[action]/submit/route";
-import { POST as sync } from "../app/api/orders/[id]/escrow/route";
+import { GET as getOrder, POST as sync } from "../app/api/orders/[id]/escrow/route";
 import {
   EscrowActionError,
   prepareEscrowAction,
@@ -204,15 +204,78 @@ describe("escrow lifecycle routes", () => {
   });
 
   it("reports the synced order and whether it changed", async () => {
+    const escrow = {
+      status: "shipped" as const,
+      shipBy: "2026-12-01T00:00:00.000Z",
+      releaseAfter: "2026-12-04T00:00:00.000Z",
+    };
     vi.mocked(syncEscrowOrderStatus).mockResolvedValueOnce({
       result: "updated",
       order: { ...store.getOrder("order-1")!, status: "shipped" },
+      escrow,
     });
     const response = await sync(request("buyer-token"), { params: Promise.resolve({ id: "order-1" }) });
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json();
+    expect(body).toMatchObject({
       changed: true,
       order: { status: "shipped" },
+      escrow,
+      roles: ["buyer"],
+    });
+    expect(body.order).not.toHaveProperty("merchantId");
+  });
+
+  describe("GET order view", () => {
+    const get = (token: string | null, id = "order-1") =>
+      getOrder(request(token), { params: Promise.resolve({ id }) });
+
+    it("requires authentication and hides the order from strangers", async () => {
+      expect((await get(null)).status).toBe(401);
+      expect((await get("stranger-token")).status).toBe(404);
+      expect((await get("buyer-token", "missing")).status).toBe(404);
+    });
+
+    it("shows the buyer their order with the buyer role only", async () => {
+      const response = await get("buyer-token");
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.roles).toEqual(["buyer"]);
+      expect(body.order).toMatchObject({
+        id: "order-1",
+        status: "paid",
+        settlement: "escrow",
+        sponsored: true,
+        amountUsdc: 0.3,
+      });
+    });
+
+    it("never exposes the merchant DID or the prepared-action binding", async () => {
+      seed({
+        escrowAction: {
+          action: "ship",
+          signer: "merchant-wallet",
+          messageHash: "secret-hash",
+          preparedAt: new Date().toISOString(),
+        },
+        sponsoredTransactionHash: "sponsored-hash",
+      });
+      const body = await (await get("merchant-token")).json();
+      expect(body.roles).toEqual(["merchant"]);
+      for (const key of [
+        "merchantId",
+        "escrowAction",
+        "sponsoredTransactionHash",
+        "inventoryReserved",
+      ]) {
+        expect(body.order).not.toHaveProperty(key);
+      }
+    });
+
+    it("does not read or change on-chain state", async () => {
+      await get("buyer-token");
+      expect(syncEscrowOrderStatus).not.toHaveBeenCalled();
+      expect(store.getOrder("order-1")?.status).toBe("paid");
     });
   });
 });

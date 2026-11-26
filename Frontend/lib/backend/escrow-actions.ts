@@ -16,6 +16,7 @@ import {
   markShippedInstruction,
   settleInstruction,
   type EscrowAction,
+  type EscrowOrderAccount,
 } from "@/lib/backend/escrow";
 import {
   readEscrowOrderState,
@@ -32,6 +33,7 @@ import {
 } from "@/lib/backend/sponsor-signing";
 import { store } from "@/lib/backend/store";
 import type { Order } from "@/lib/backend/types";
+import type { EscrowTiming } from "@/lib/escrow-ui";
 
 /**
  * Escrow order lifecycle after payment: ship, confirm receipt, refund, claim.
@@ -418,12 +420,29 @@ export async function syncEscrowOrderStatus(
     );
   }
   if (order.status !== "paid" && order.status !== "shipped") {
-    return { result: "unchanged" as const, order };
+    return { result: "unchanged" as const, order, escrow: null };
   }
 
   const state = await authenticatedEscrowState(
     order,
     injectedDependencies ?? defaultActionDependencies(),
   );
-  return store.applyEscrowStatus(order.id, STORE_STATUS[state.account.status]);
+  return {
+    ...store.applyEscrowStatus(order.id, STORE_STATUS[state.account.status]),
+    escrow: escrowTiming(state.account),
+  };
+}
+
+function isoFromUnixSeconds(seconds: bigint) {
+  return new Date(Number(seconds) * 1000).toISOString();
+}
+
+/** Deadlines from the authenticated on-chain account, for countdowns. */
+export function escrowTiming(account: EscrowOrderAccount): EscrowTiming {
+  return {
+    status: account.status,
+    shipBy: isoFromUnixSeconds(account.shipBy),
+    releaseAfter:
+      account.releaseAfter > BigInt(0) ? isoFromUnixSeconds(account.releaseAfter) : null,
+  };
 }

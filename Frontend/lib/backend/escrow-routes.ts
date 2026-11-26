@@ -11,6 +11,7 @@ import { SolanaSponsorConfigurationError } from "@/lib/backend/solana-sponsor";
 import { SponsoredSubmissionError } from "@/lib/backend/sponsor-signing";
 import { store } from "@/lib/backend/store";
 import type { Order } from "@/lib/backend/types";
+import type { OrderView } from "@/lib/escrow-ui";
 
 export function errorResponse(error: string, status: number, code?: string) {
   return NextResponse.json({ error, ...(code ? { code } : {}) }, { status });
@@ -155,4 +156,30 @@ export function escrowErrorResponse(error: unknown) {
     error instanceof Error ? error.message : "unknown error",
   );
   return errorResponse("Unable to process the escrow action", 502, "escrow_action_failed");
+}
+
+/**
+ * The fields the order's merchant and buyer may see. Leaves out the merchant
+ * DID, the prepared-action binding and the sponsored message hash.
+ */
+export function toOrderView(order: Order): OrderView {
+  return {
+    id: order.id,
+    productId: order.productId,
+    productName: store.getProduct(order.productId)?.name ?? "Product",
+    variant: order.variant,
+    quantity: order.quantity,
+    amountUsdc: order.amountUsdc,
+    status: order.status,
+    settlement: order.settlement,
+    sponsored: order.sponsored,
+    buyerWallet: order.buyerWallet,
+    merchantWallet: order.merchantWallet,
+    txSignature: order.txSignature,
+    escrowActionSignature: order.escrowActionSignature,
+    createdAt: order.createdAt,
+    shippedAt: order.shippedAt,
+    releasedAt: order.releasedAt,
+    refundedAt: order.refundedAt,
+  };
 }
