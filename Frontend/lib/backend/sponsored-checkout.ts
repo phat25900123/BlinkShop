@@ -1,7 +1,5 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import {
   getAccount,
   getAssociatedTokenAddress,
@@ -22,6 +20,7 @@ import {
 } from "@/lib/backend/escrow";
 import { getEscrowConfig, getSponsorLimits } from "@/lib/backend/escrow-config";
 import { getSolanaSponsorPublicKey } from "@/lib/backend/solana-sponsor";
+import { getSponsoredTransactionMessageHash } from "@/lib/backend/sponsor-signing";
 import {
   isBelowMinimumOrder,
   usdcToBaseUnits,
@@ -29,11 +28,7 @@ import {
 
 export { USDC_DECIMALS } from "@/lib/backend/sponsor-limits";
 
-export function getSponsoredTransactionMessageHash(transaction: Transaction) {
-  return createHash("sha256")
-    .update(transaction.serializeMessage())
-    .digest("base64");
-}
+export { getSponsoredTransactionMessageHash } from "@/lib/backend/sponsor-signing";
 
 type TokenAccountIdentity = {
   mint: PublicKey;
