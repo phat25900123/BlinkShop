@@ -1,16 +1,23 @@
 import {
   Connection,
   PublicKey,
-  Transaction,
   type ParsedTransactionWithMeta,
 } from "@solana/web3.js";
 import {
-  createAssociatedTokenAccountInstruction,
-  createTransferInstruction,
   getAccount,
   getAssociatedTokenAddress,
   TokenError,
 } from "@solana/spl-token";
+
+import {
+  decodeEscrowOrderAccount,
+  escrowOrderId,
+  findEscrowOrderAddress,
+  findEscrowVaultAddress,
+  type EscrowOrderAccount,
+} from "@/lib/backend/escrow";
+import { getEscrowConfig } from "@/lib/backend/escrow-config";
+import { usdcToBaseUnits } from "@/lib/backend/sponsor-limits";
 
 export function getSolanaConfig() {
   return {
@@ -33,60 +40,6 @@ function requirePaymentConfig(merchantWallet: string) {
     mint: new PublicKey(usdcMint),
     merchant: new PublicKey(merchantWallet),
   };
-}
-
-export async function createUsdcTransferTransaction(
-  buyerWallet: string,
-  merchantWallet: string,
-  amountUsdc: number,
-) {
-  const { mint, merchant } = requirePaymentConfig(merchantWallet);
-  const buyer = new PublicKey(buyerWallet);
-  const connection = new Connection(getSolanaConfig().rpcUrl, "confirmed");
-  const [buyerTokenAccount, merchantTokenAccount, latestBlockhash] = await Promise.all([
-    getAssociatedTokenAddress(mint, buyer),
-    getAssociatedTokenAddress(mint, merchant),
-    connection.getLatestBlockhash("confirmed"),
-  ]);
-  const amount = BigInt(Math.round(amountUsdc * 1_000_000));
-  const transaction = new Transaction({ blockhash: latestBlockhash.blockhash, lastValidBlockHeight: latestBlockhash.lastValidBlockHeight, feePayer: buyer });
-const [buyerAccount, merchantAccount] = await Promise.all([
-  getAccount(connection, buyerTokenAccount).catch(() => null),
-  getAccount(connection, merchantTokenAccount).catch(() => null),
-]);
-
-// Buyer chưa có USDC ATA → tạo ATA cho buyer
-if (!buyerAccount) {
-  transaction.add(
-    createAssociatedTokenAccountInstruction(
-      buyer,              // payer
-      buyerTokenAccount,  // ATA address
-      buyer,              // owner
-      mint,
-    ),
-  );
-}
-
-// Merchant chưa có USDC ATA → tạo ATA cho merchant
-if (!merchantAccount) {
-  transaction.add(
-    createAssociatedTokenAccountInstruction(
-      buyer,                 // payer
-      merchantTokenAccount,  // ATA address
-      merchant,              // owner
-      mint,
-    ),
-  );
-}
-transaction.add(
-  createTransferInstruction(
-    buyerTokenAccount,
-    merchantTokenAccount,
-    buyer,
-    amount,
-  ),
-);
-  return { serializedTransaction: transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64"), blockhash: latestBlockhash.blockhash, merchantWallet: merchant.toBase58(), usdcMint: mint.toBase58() };
 }
 
 export type PaymentVerification = "valid" | "invalid" | "pending";
@@ -296,5 +249,227 @@ export async function getMerchantPayoutReadiness(
       Boolean(account) &&
       account!.mint.equals(mint) &&
       account!.owner.equals(merchant),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Escrow payment verification
+// ---------------------------------------------------------------------------
+
+type EscrowAccountInfo = {
+  owner: PublicKey;
+  data: Buffer | Uint8Array;
+};
+
+type EscrowVaultAccount = {
+  mint: PublicKey;
+  /** SPL token authority of the vault. */
+  owner: PublicKey;
+  amount: bigint;
+};
+
+export type EscrowPaymentVerificationDependencies = {
+  getParsedTransaction: (
+    signature: string,
+  ) => Promise<ParsedTransactionWithMeta | null>;
+  getAccountInfo: (address: PublicKey) => Promise<EscrowAccountInfo | null>;
+  loadTokenAccount: (address: PublicKey) => Promise<EscrowVaultAccount | null>;
+};
+
+export type EscrowPaymentExpectation = {
+  orderId: string;
+  buyerWallet: string;
+  merchantWallet: string;
+  amountUsdc: number;
+};
+
+function defaultEscrowVerificationDependencies(): EscrowPaymentVerificationDependencies {
+  const connection = new Connection(getSolanaConfig().rpcUrl, "confirmed");
+  return {
+    getParsedTransaction: (signature) =>
+      connection.getParsedTransaction(signature, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      }),
+    getAccountInfo: (address) => connection.getAccountInfo(address, "confirmed"),
+    loadTokenAccount: async (address) => {
+      try {
+        return await getAccount(connection, address, "confirmed");
+      } catch (error) {
+        if (error instanceof TokenError) return null;
+        throw error;
+      }
+    },
+  };
+}
+
+/**
+ * Proves a BlinkShop order is funded by reading on-chain escrow state, not
+ * token balance deltas:
+ *
+ * 1. The submitted signature is a successful transaction that touched this
+ *    order's PDA through the escrow program (ties the stored signature to the
+ *    order so it cannot be an unrelated transaction).
+ * 2. The order PDA (seeds "order", merchant, sha256(order id)) is owned by the
+ *    escrow program and decodes as an `Order` whose order id, merchant, buyer,
+ *    mint and amount all equal the server's own record, with status Funded
+ *    or Shipped (the merchant may ship before confirmation runs). Released and
+ *    Refunded orders no longer hold the payment and are rejected.
+ * 3. The vault PDA is a token account for that mint, whose authority is the
+ *    order PDA, holding exactly the order amount.
+ *
+ * Every expected value comes from the server order snapshot and server
+ * configuration; nothing reported by the client is trusted.
+ */
+export async function verifyEscrowPayment(
+  signature: string,
+  expected: EscrowPaymentExpectation,
+  injectedDependencies?: EscrowPaymentVerificationDependencies,
+): Promise<PaymentVerification> {
+  const { mint, merchant } = requirePaymentConfig(expected.merchantWallet);
+  const { programId } = getEscrowConfig();
+  const buyer = new PublicKey(expected.buyerWallet);
+  const amount = usdcToBaseUnits(expected.amountUsdc);
+  const onChainOrderId = escrowOrderId(expected.orderId);
+  const orderAddress = findEscrowOrderAddress(programId, merchant, onChainOrderId);
+  const vaultAddress = findEscrowVaultAddress(programId, orderAddress);
+  const dependencies =
+    injectedDependencies ?? defaultEscrowVerificationDependencies();
+
+  const transaction = await dependencies.getParsedTransaction(signature);
+  if (!transaction) return "pending";
+  if (transaction.meta?.err) return "invalid";
+
+  const accountKeys = transaction.transaction.message.accountKeys.map((entry) =>
+    entry.pubkey.toBase58(),
+  );
+  if (
+    !accountKeys.includes(programId.toBase58()) ||
+    !accountKeys.includes(orderAddress.toBase58())
+  ) {
+    return "invalid";
+  }
+
+  const orderAccount = await dependencies.getAccountInfo(orderAddress);
+  // The transaction is visible but the account is not yet: RPC lag.
+  if (!orderAccount) return "pending";
+  if (!orderAccount.owner.equals(programId)) return "invalid";
+
+  const order = decodeEscrowOrderAccount(orderAccount.data);
+  if (
+    !order ||
+    !order.orderId.equals(onChainOrderId) ||
+    !order.merchant.equals(merchant) ||
+    !order.buyer.equals(buyer) ||
+    !order.mint.equals(mint) ||
+    order.amount !== amount ||
+    (order.status !== "funded" && order.status !== "shipped")
+  ) {
+    return "invalid";
+  }
+
+  const vault = await dependencies.loadTokenAccount(vaultAddress);
+  if (
+    !vault ||
+    !vault.mint.equals(mint) ||
+    !vault.owner.equals(orderAddress) ||
+    vault.amount !== amount
+  ) {
+    return "invalid";
+  }
+
+  return "valid";
+}
+
+// ---------------------------------------------------------------------------
+// Escrow order state (lifecycle actions and status sync)
+// ---------------------------------------------------------------------------
+
+export type EscrowStateDependencies = Pick<
+  EscrowPaymentVerificationDependencies,
+  "getAccountInfo" | "loadTokenAccount"
+>;
+
+export type EscrowOrderState =
+  | { state: "missing" }
+  | { state: "invalid" }
+  | {
+      state: "ok";
+      programId: PublicKey;
+      orderAddress: PublicKey;
+      vaultAddress: PublicKey;
+      mint: PublicKey;
+      merchant: PublicKey;
+      buyer: PublicKey;
+      account: EscrowOrderAccount;
+    };
+
+function defaultEscrowStateDependencies(): EscrowStateDependencies {
+  const { getAccountInfo, loadTokenAccount } =
+    defaultEscrowVerificationDependencies();
+  return { getAccountInfo, loadTokenAccount };
+}
+
+/**
+ * Reads and authenticates an order's escrow account against the server order:
+ * owned by the configured escrow program, at the PDA derived from the server
+ * order id and merchant, with matching order id, merchant, buyer, mint and
+ * amount. The vault must hold exactly the amount while Funded/Shipped and be
+ * closed once Released/Refunded. Anything else is "invalid".
+ */
+export async function readEscrowOrderState(
+  expected: EscrowPaymentExpectation,
+  injectedDependencies?: EscrowStateDependencies,
+): Promise<EscrowOrderState> {
+  const { mint, merchant } = requirePaymentConfig(expected.merchantWallet);
+  const { programId } = getEscrowConfig();
+  const buyer = new PublicKey(expected.buyerWallet);
+  const amount = usdcToBaseUnits(expected.amountUsdc);
+  const onChainOrderId = escrowOrderId(expected.orderId);
+  const orderAddress = findEscrowOrderAddress(programId, merchant, onChainOrderId);
+  const vaultAddress = findEscrowVaultAddress(programId, orderAddress);
+  const dependencies = injectedDependencies ?? defaultEscrowStateDependencies();
+
+  const info = await dependencies.getAccountInfo(orderAddress);
+  if (!info) return { state: "missing" };
+  if (!info.owner.equals(programId)) return { state: "invalid" };
+
+  const account = decodeEscrowOrderAccount(info.data);
+  if (
+    !account ||
+    !account.orderId.equals(onChainOrderId) ||
+    !account.merchant.equals(merchant) ||
+    !account.buyer.equals(buyer) ||
+    !account.mint.equals(mint) ||
+    account.amount !== amount
+  ) {
+    return { state: "invalid" };
+  }
+
+  const vault = await dependencies.loadTokenAccount(vaultAddress);
+  const holdsFunds = account.status === "funded" || account.status === "shipped";
+  if (holdsFunds) {
+    if (
+      !vault ||
+      !vault.mint.equals(mint) ||
+      !vault.owner.equals(orderAddress) ||
+      vault.amount !== amount
+    ) {
+      return { state: "invalid" };
+    }
+  } else if (vault) {
+    // Settlement always closes the vault in the same instruction.
+    return { state: "invalid" };
+  }
+
+  return {
+    state: "ok",
+    programId,
+    orderAddress,
+    vaultAddress,
+    mint,
+    merchant,
+    buyer,
+    account,
   };
 }

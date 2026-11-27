@@ -1,12 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requirePrivyUser } from "@/lib/backend/auth";
+import {
+  EscrowConfigurationError,
+  getSponsorLimits,
+} from "@/lib/backend/escrow-config";
 import { getPrivyEmbeddedSolanaWallet } from "@/lib/backend/privy";
 import {
-  createSponsoredUsdcTransferTransaction,
+  createSponsoredEscrowOrderTransaction,
   SponsoredCheckoutError,
 } from "@/lib/backend/sponsored-checkout";
 import { SolanaSponsorConfigurationError } from "@/lib/backend/solana-sponsor";
+import {
+  checkBuyerOrderLimits,
+  isBelowMinimumOrder,
+  isGlobalSponsorCapReached,
+} from "@/lib/backend/sponsor-limits";
 import { store } from "@/lib/backend/store";
 
 type Context = {
@@ -89,6 +98,24 @@ export async function POST(request: NextRequest, context: Context) {
     return errorResponse("Insufficient inventory", 409);
   }
 
+  let limits: ReturnType<typeof getSponsorLimits>;
+  try {
+    limits = getSponsorLimits();
+  } catch (error) {
+    if (error instanceof EscrowConfigurationError) {
+      return errorResponse(error.message, 503, error.code);
+    }
+    throw error;
+  }
+
+  if (isBelowMinimumOrder(product.priceUsdc * quantity, limits)) {
+    return errorResponse(
+      "The order total is below the minimum BlinkShop sponsors.",
+      409,
+      "order_below_minimum",
+    );
+  }
+
   let wallet: Awaited<ReturnType<typeof getPrivyEmbeddedSolanaWallet>>;
 
   try {
@@ -126,7 +153,26 @@ export async function POST(request: NextRequest, context: Context) {
     );
   }
 
+  const currentOrders = store.listOrders();
+  const limitViolation = checkBuyerOrderLimits(
+    currentOrders,
+    wallet.address,
+    limits,
+  );
+  if (limitViolation) {
+    return errorResponse(limitViolation.message, 429, limitViolation.code);
+  }
+  if (isGlobalSponsorCapReached(currentOrders, limits)) {
+    return errorResponse(
+      "BlinkShop has reached today's limit for sponsored checkouts. Please try again later.",
+      503,
+      "sponsor_daily_cap",
+    );
+  }
+
   const order = store.createOrder({
+    settlement: "escrow",
+    sponsored: true,
     productId: product.id,
     buyerWallet: wallet.address,
     variant: variant?.value,
@@ -137,7 +183,8 @@ export async function POST(request: NextRequest, context: Context) {
   if (!order) return errorResponse("Insufficient inventory", 409);
 
   try {
-    const transaction = await createSponsoredUsdcTransferTransaction(
+    const transaction = await createSponsoredEscrowOrderTransaction(
+      order.id,
       wallet.address,
       order.merchantWallet,
       order.amountUsdc,
@@ -164,13 +211,19 @@ export async function POST(request: NextRequest, context: Context) {
   } catch (error) {
     store.markFailed(order.id);
 
-    if (error instanceof SolanaSponsorConfigurationError) {
+    if (
+      error instanceof SolanaSponsorConfigurationError ||
+      error instanceof EscrowConfigurationError
+    ) {
       return errorResponse(error.message, 503, error.code);
     }
 
     if (error instanceof SponsoredCheckoutError) {
       const status =
-        error.code === "buyer_usdc_account_missing" ? 409 : 503;
+        error.code === "buyer_usdc_account_missing" ||
+        error.code === "order_below_minimum"
+          ? 409
+          : 503;
       return errorResponse(error.message, status, error.code);
     }
 

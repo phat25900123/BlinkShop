@@ -6,6 +6,7 @@ import type {
   ProductStatus,
   ProductVariant,
 } from "./types";
+import { isPaidOrLater, type EscrowActionName } from "./types";
 
 import {
   persistState,
@@ -419,7 +420,13 @@ export const store = {
       | "sponsoredTransactionHash"
       | "merchantId"
       | "merchantWallet"
-    >,
+      | "settlement"
+      | "sponsored"
+    > & {
+      // New orders fund the escrow unless a caller says otherwise.
+      settlement?: Order["settlement"];
+      sponsored?: boolean;
+    },
   ) {
     const product =
       products.get(
@@ -506,13 +513,16 @@ export const store = {
     const order: Order = {
       ...input,
 
+      settlement: input.settlement ?? "escrow",
+      sponsored: input.sponsored ?? false,
+
       merchantId: product.merchantId,
       merchantWallet: product.merchantWallet,
 
-      id: `order-${randomUUID().slice(
-        0,
-        8,
-      )}`,
+      // Full 128-bit UUID: the escrow PDA is seeded by sha256(order id) per
+      // merchant, so a collision would make the second order unpayable.
+      // Older 8-hex-character ids remain valid; ids are never parsed.
+      id: `order-${randomUUID()}`,
 
       status: "pending",
 
@@ -608,7 +618,7 @@ export const store = {
       return { result: "signature_conflict" as const };
     }
 
-    if (order.status === "paid") {
+    if (isPaidOrLater(order.status)) {
       return order.txSignature === signature
         ? {
             result: "paid" as const,
@@ -648,7 +658,7 @@ export const store = {
       return { result: "signature_conflict" as const };
     }
 
-    if (currentOrder.status === "paid") {
+    if (isPaidOrLater(currentOrder.status)) {
       return currentOrder.txSignature === signature
         ? {
             result: "paid" as const,
@@ -678,6 +688,94 @@ export const store = {
       : { result: "state_error" as const };
   },
 
+  /**
+   * Binds the lifecycle transaction BlinkShop prepared for an escrow order, so
+   * only that exact message can later be co-signed by the sponsor.
+   */
+  bindEscrowAction(
+    id: string,
+    action: EscrowActionName,
+    signer: string,
+    messageHash: string,
+  ) {
+    const order = orders.get(id);
+    if (
+      !order ||
+      order.settlement !== "escrow" ||
+      (order.status !== "paid" && order.status !== "shipped")
+    ) {
+      return undefined;
+    }
+
+    const updated = {
+      ...order,
+      escrowAction: {
+        action,
+        signer,
+        messageHash,
+        preparedAt: new Date().toISOString(),
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    orders.set(id, updated);
+    persistState();
+    return updated;
+  },
+
+  recordEscrowActionSignature(id: string, signature: string) {
+    const order = orders.get(id);
+    if (!order) return undefined;
+    const updated = {
+      ...order,
+      escrowActionSignature: signature,
+      updatedAt: new Date().toISOString(),
+    };
+    orders.set(id, updated);
+    persistState();
+    return updated;
+  },
+
+  /**
+   * Moves an escrow order to the status read from its on-chain account.
+   * Callers must pass only verified on-chain state. Transitions are
+   * forward-only (paid -> shipped -> released | refunded); a terminal or
+   * backwards change is refused, so a stale read can never undo progress.
+   */
+  applyEscrowStatus(
+    id: string,
+    next: "paid" | "shipped" | "released" | "refunded",
+  ) {
+    const order = orders.get(id);
+    if (!order) return { result: "not_found" as const };
+    if (order.settlement !== "escrow") return { result: "not_escrow" as const };
+
+    const rank = { paid: 0, shipped: 1, released: 2, refunded: 2 } as const;
+    if (!(order.status in rank)) {
+      return { result: "invalid_transition" as const, order };
+    }
+    const current = order.status as keyof typeof rank;
+    if (current === next) return { result: "unchanged" as const, order };
+    if (rank[current] >= rank[next]) {
+      return { result: "invalid_transition" as const, order };
+    }
+
+    const now = new Date().toISOString();
+    const updated: Order = {
+      ...order,
+      status: next,
+      escrowAction: undefined,
+      // Recorded when BlinkShop observes the change; a paid -> released jump
+      // (shipped and confirmed between two syncs) leaves shippedAt unknown.
+      ...(next === "shipped" ? { shippedAt: now } : {}),
+      ...(next === "released" ? { releasedAt: now } : {}),
+      ...(next === "refunded" ? { refundedAt: now } : {}),
+      updatedAt: now,
+    };
+    orders.set(id, updated);
+    persistState();
+    return { result: "updated" as const, order: updated };
+  },
+
   markPaid(id: string) {
     const order =
       orders.get(id);
@@ -686,9 +784,7 @@ export const store = {
       return undefined;
     }
 
-    if (
-      order.status === "paid"
-    ) {
+    if (isPaidOrLater(order.status)) {
       return order;
     }
 
@@ -731,9 +827,8 @@ export const store = {
       return undefined;
     }
 
-    if (
-      order.status === "paid"
-    ) {
+    // A paid, shipped, released or refunded order consumed its stock for good.
+    if (isPaidOrLater(order.status)) {
       return order;
     }
 

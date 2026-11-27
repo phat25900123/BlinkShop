@@ -38,18 +38,37 @@ vi.mock("../lib/backend/privy", () => {
   };
 });
 
+// Blink Actions now build a buyer-funded escrow create_order (previously a
+// direct USDC transfer from lib/backend/solana).
+vi.mock("../lib/backend/sponsored-checkout", () => {
+  class SponsoredCheckoutError extends Error {
+    constructor(
+      public readonly code: string,
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+
+  return {
+    SponsoredCheckoutError,
+    createBuyerFundedEscrowOrderTransaction: vi.fn(async () => ({
+      serializedTransaction: "base64-transaction",
+      blockhash: "blockhash",
+      merchantWallet: "merchant-wallet",
+      usdcMint: "usdc-mint",
+      escrowOrderAccount: "escrow-order",
+    })),
+  };
+});
+
 vi.mock("../lib/backend/solana", () => ({
-  createUsdcTransferTransaction: vi.fn(async () => ({
-    serializedTransaction: "base64-transaction",
-    blockhash: "blockhash",
-    merchantWallet: "merchant-wallet",
-    usdcMint: "usdc-mint",
-  })),
   getSolanaConfig: () => ({
     usdcMint: "usdc-mint",
     merchantWallet: "legacy-wallet",
   }),
   verifyUsdcPayment: vi.fn(async () => "valid"),
+  verifyEscrowPayment: vi.fn(async () => "valid"),
 }));
 
 import {
@@ -72,7 +91,10 @@ import {
   POST as createProductAction,
 } from "../app/api/actions/product/[id]/route";
 import { getPrivyEmbeddedSolanaWallet } from "../lib/backend/privy";
-import { createUsdcTransferTransaction } from "../lib/backend/solana";
+import {
+  createBuyerFundedEscrowOrderTransaction,
+  SponsoredCheckoutError,
+} from "../lib/backend/sponsored-checkout";
 import { store } from "../lib/backend/store";
 import { addProduct, resetStore } from "./helpers/store-fixtures";
 
@@ -512,12 +534,38 @@ describe("self-service merchant authentication and isolation", () => {
     expect(detail.status).toBe(200);
     expect(action.status).toBe(200);
     expect(actionPost.status).toBe(200);
-    expect(createUsdcTransferTransaction).toHaveBeenCalledWith(
+    expect(createBuyerFundedEscrowOrderTransaction).toHaveBeenCalledWith(
+      store.listOrders()[0].id,
       buyerWallet,
       product.merchantWallet,
       product.priceUsdc,
     );
+    expect(store.listOrders()[0]).toMatchObject({
+      settlement: "escrow",
+      sponsored: false,
+    });
     expect(confirmation.status).toBe(400);
+  });
+
+  it("fails a Blink order and releases stock when the buyer has no USDC account", async () => {
+    const product = addProduct({ inventory: 2 });
+    vi.mocked(createBuyerFundedEscrowOrderTransaction).mockRejectedValueOnce(
+      new SponsoredCheckoutError(
+        "buyer_usdc_account_missing",
+        "Your wallet does not have a USDC token account yet.",
+      ),
+    );
+    const response = await createProductAction(
+      request(`http://localhost/api/actions/product/${product.id}?quantity=1`, {
+        method: "POST",
+        body: { account: buyerWallet },
+      }),
+      productContext(product.id),
+    );
+
+    expect(response.status).toBe(409);
+    expect(store.listOrders()[0].status).toBe("failed");
+    expect(store.getProduct(product.id)?.inventory).toBe(2);
   });
 
   it("does not let an Action request override the product merchant wallet", async () => {
@@ -535,7 +583,8 @@ describe("self-service merchant authentication and isolation", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(createUsdcTransferTransaction).toHaveBeenCalledWith(
+    expect(createBuyerFundedEscrowOrderTransaction).toHaveBeenCalledWith(
+      store.listOrders()[0].id,
       buyerWallet,
       walletA,
       product.priceUsdc,

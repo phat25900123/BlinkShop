@@ -34,7 +34,7 @@ export default async function BlinkFallback({ params }: Context) {
           <div className="blink-fallback-price"><strong>{product.priceUsdc.toFixed(2)} <small>USDC</small></strong><span className={availability === "Sold out" ? "sold-out-text" : ""}>{availability}</span></div>
           <BlinkCheckout product={product} />
           {process.env.NODE_ENV !== "production" && <a className="blink-fallback-action-link" href={actionUrl}>View Action metadata <span>↗</span></a>}
-          <p className="blink-fallback-note">Direct merchant checkout. Payments settle to the product owner in Devnet USDC.</p>
+          <p className="blink-fallback-note">Escrow-protected checkout. Your Devnet USDC is released to the merchant after delivery.</p>
         </div>
       </div>
     </main>

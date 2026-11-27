@@ -1,22 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { store } from "@/lib/backend/store";
-import { verifyUsdcPayment } from "@/lib/backend/solana";
-
-async function verifyWithRetry(
-  signature: string,
-  expected: {
-    buyerWallet: string;
-    merchantWallet: string;
-    amountUsdc: number;
-  },
-) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const result = await verifyUsdcPayment(signature, expected);
-    if (result !== "pending") return result;
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  return "pending" as const;
-}
+import { verifyOrderPaymentWithRetry } from "@/lib/backend/order-payment";
+import { isPaidOrLater } from "@/lib/backend/types";
 
 export async function POST(request: NextRequest) {
   let body: { orderId?: unknown; txSignature?: unknown };
@@ -60,14 +45,12 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
-    if (order.status === "paid") return NextResponse.json({ order, duplicate: true });
+    if (isPaidOrLater(order.status)) return NextResponse.json({ order, duplicate: true });
     const existing = store.findOrderBySignature(body.txSignature);
     if (existing && existing.id !== order.id) return NextResponse.json({ error: "Transaction signature already used" }, { status: 409 });
-    const verification = await verifyWithRetry(body.txSignature, {
-      buyerWallet: order.buyerWallet,
-      merchantWallet: order.merchantWallet,
-      amountUsdc: order.amountUsdc,
-    });
+    // Escrow orders are proven from the escrow PDA and vault; legacy direct
+    // orders keep transfer verification.
+    const verification = await verifyOrderPaymentWithRetry(body.txSignature, order);
     if (verification === "pending") return NextResponse.json({ message: "Payment is still being confirmed", order: store.getOrder(order.id) }, { status: 202 });
     if (verification === "invalid") return NextResponse.json({ error: "Payment could not be verified", order: store.getOrder(order.id) }, { status: 422 });
 
